@@ -1,0 +1,231 @@
+%% ------------ Computer Exercise - Network Security---------------
+clear all;
+close all;
+% -----------------------------------------------------------------
+%                  Roy Kislev - 206917064
+%               Michael Grenader - 208839845
+% -----------------------------------------------------------------
+% Number of Links
+L = 5;
+% Number of users
+U = 6;
+% Alpha fairness
+alpha = 20;
+%%
+% ---------------Primal Algorithm-----------------------------------
+% ---------------Init Parameters-----------------------------------
+
+% Capacitance of links
+for i=1:L
+   C_l(i) = 1;
+end
+
+% Init x_r
+for user=1:U
+    X_r(user) = 1;
+end
+
+% Matrix for users links
+for user=1:U
+    for link=1:L
+        if user == 1
+            Users(user,link) = 1;
+        elseif user == link + 1
+            Users(user,link) = 1;
+        else
+            Users(user,link) = 0;
+        end
+    end
+end
+
+% -----------------------------------------------------------------
+% Num of iterations
+N = 15000;
+
+%%
+% ---------------------Initialize cost function---------------------
+%                B_l = exp(const_cost*Sum(Links_x_r))
+% Cost Constannt
+const_cost = 0.62;
+
+% Initialize
+for user=1:U
+    K_r(user) = 0.001; % Step size
+    U_r(user) = (X_r(user)^(1-alpha))./(1-alpha); %alpha fairness
+    derivative_U_r(user) = 1./((X_r(user))^(alpha));
+end
+
+% Link rates per user
+for link=1:L
+    for user=1:U
+        if Users(user,link) == 1 % if the user use this link
+            Links(link,user) = X_r(user);
+        end
+    end
+end
+%  G Graph
+W =[1 1 1 1 1 1 1 1 1 1];
+G= sparse([ 1 1 1 1 1  2 3 4 5 6],[ 2 3 4 5 6 3 4 5 6 6],W);
+G=tril(G + G');
+
+
+% Get initial rates
+X_r_iter = X_r';
+
+for iter=1:N
+    user_iter = randi([1 U]); % random user
+
+    %% Utility function
+
+    derivative_U_r(user_iter) = 1./((X_r(user_iter))^(alpha));
+
+    %% Cost function
+    sum_link_rate = 0;
+    for link=1:L
+
+        if Links(link,user_iter) ~= 0
+
+            Links(link,user_iter) = X_r(user_iter);
+
+            sum_rate = 0;
+            for user=1:U
+                sum_rate = sum_rate + Links(link,user);
+            end
+        else
+            continue
+        end
+
+        cost_func = exp(const_cost*(sum_rate));
+
+        sum_link_rate = sum_link_rate + cost_func;
+    end
+
+    %% Iteration function
+
+    X_r(user_iter) = X_r(user_iter) + K_r(user_iter)*( derivative_U_r(user_iter) - sum_link_rate);
+
+
+    %% Update rates per iteration and update random user
+    X_r_iter(:,iter+1) = X_r(:);
+
+end
+%%
+% --------------------- Plot Primal---------------------------------------
+x_index = 1:N+1;
+
+figure('Name','Exercise 1 - Primal');
+plot(x_index , X_r_iter(1,:) ,'r' ,x_index , X_r_iter(2,:),'b', x_index , X_r_iter(3,:) ,'g', x_index , X_r_iter(4,:) ,'y',  x_index , X_r_iter(5,:) ,'c--', x_index , X_r_iter(6,:) ,'k');
+
+lgd = legend( 'User 1' , 'User 2', 'User 3' , 'User 4', 'User 5' , 'User 6');
+legend('Location','northeast')
+grid on
+xlabel('Iteration')
+ylabel('X_r')
+title('Primal Problem - \alpha = 10');
+
+
+
+% ------------------------------------------------------------------------
+%%
+% --------------------Dual Algorithm--------------------------------------
+% Number of iterations
+N_dual = 2500000;
+
+% Initial X_r rates per users
+for user=1:U
+    X_r_dual(user) = 1;
+end
+
+% For each link, all the user's rate
+for link=1:L
+    for user=1:U
+        if Users(user,link) == 1 % if the user use this link
+            Links(link,user) = X_r_dual(user);
+        end
+    end
+end
+
+% Initilaze
+for user=1:U
+    H_r_dual(user) =50; % Step size
+    U_r_dual(user) = (X_r_dual(user)^(1-alpha))./(1-alpha);
+
+    derivative_U_r_dual(user) = 1./((X_r_dual(user))^(alpha));
+end
+
+% Initial Lagrange multiplier
+for link=1:L
+    for user=1:U
+        if Users(user,link) == 1 % if the user use this link
+            Lagranz(link,user) = 0.20633;
+        end
+    end
+end
+
+
+% get initial rates
+X_r_dual_iter = X_r_dual';
+
+for iter=1:N_dual
+    user_iter = randi([1 U]); % random user
+
+    %% sum of lagranz
+    sum_lagranz = 0;
+    for link=1:L
+        if Links(link,user_iter) ~= 0
+            sum_lagranz =  sum_lagranz + Lagranz(link,user_iter);
+        end
+    end
+
+    %% inverse dirivative utility func with q_r
+
+     X_r_dual(user_iter) =  (sum_lagranz^((-1)./ alpha));
+
+    %% y_l - c_l
+
+    for link=1:L
+        if Links(link,user_iter) ~= 0 % check if this link used by the user_iter
+
+           Links(link,user_iter) = X_r_dual(user_iter);
+
+           y_l = 0;
+            for user=1:U
+                y_l = y_l + Links(link,user); % sum all rates of users that used this link
+            end
+
+             if Lagranz(link,user_iter) == 0
+                 y_l_c_l = max((y_l - C_l(link)), 0);
+
+             elseif Lagranz(link,user_iter) > 0
+
+                 y_l_c_l = y_l - C_l(link);
+
+             else
+                 Lagranz(link,user_iter) = 0;
+
+             end
+
+             %% update Lagrange multiplier
+             Lagranz(link,user_iter) = Lagranz(link,user_iter) + H_r_dual(user_iter)*y_l_c_l;
+
+        else
+            continue
+        end
+    end
+
+    %% Update rates per iteration and update random user
+    X_r_dual_iter(:,iter+1) = X_r_dual(:);
+
+end
+% --------------------- Plot ---------------------------------------------
+x_index = 1:N_dual+1;
+
+figure('Name','Exercise 1 - Dual');
+plot(x_index , X_r_dual_iter(1,:) ,'r' ,x_index , X_r_dual_iter(2,:),'b', x_index , X_r_dual_iter(3,:) ,'g', x_index , X_r_dual_iter(4,:) ,'y',  x_index , X_r_dual_iter(5,:) ,'c--', x_index , X_r_dual_iter(6,:) ,'k');
+
+lgd = legend( 'User 1' , 'User 2', 'User 3' , 'User 4', 'User 5' , 'User 6');
+legend('Location','northeast')
+grid on
+xlabel('Iteration')
+ylabel('X_r')
+title('Dual Algorithm - \alpha = 20');
