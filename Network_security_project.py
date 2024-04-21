@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 
 def DefaultCostFunc(self, sigXr):
-    return math.exp(sigXr)
+    return math.exp(0.1823 * sigXr)
 
 
 def get_link(links_set, first_user, second_user):
@@ -22,17 +22,16 @@ def get_link(links_set, first_user, second_user):
 
 
 class Link:
-    capacity = None
-    connectedTo = set()
-    users = set()
-
     def __init__(self, firstUser, secondUser, capacity):
+        self.connectedTo = set()
         self.connectedTo.add(firstUser)
         self.connectedTo.add(secondUser)
         self.capacity = capacity
+        self.users = set()
 
     def Addconection(self, user):
         self.connectedTo.add(user)
+
     def Connected(self, user):
         return user in self.connectedTo
 
@@ -51,11 +50,6 @@ class Link:
 
 
 class User:
-    x_pos = None
-    y_pos = None
-    connectedLinks = set()
-    linksInRoutes = set()
-    Xr = None
 
     # def __init__(self, M):
     #    radius = random.uniform(0, M)
@@ -65,6 +59,10 @@ class User:
     #    self.Xr = 1
 
     def __init__(self, connectedLinks, linksInRoutes):
+        x_pos = None
+        y_pos = None
+        connectedLinks = set()
+        linksInRoutes = set()
         self.connectedLinks = connectedLinks
         self.linksInRoutes = linksInRoutes
         self.Xr = 1
@@ -84,9 +82,6 @@ class User:
         friend.connectedLinks.add(link)
         return link
 
-    # def AddConnectedLink(self, link):
-    #     self.connectedLinks.add(link)
-
     def AddlinksInRoutes(self, link):
         self.linksInRoutes.add(link)
 
@@ -96,18 +91,11 @@ class User:
     def GetXr(self):
         return self.Xr
 
+    def HasNoRoutes(self):
+        return 0 == len(self.linksInRoutes)
+
 
 class Graph:
-    N = None
-    M = None
-    r = None
-    alpha = None
-    users = []
-    links = set()
-    NumOfLinks = None
-    stepSize = None
-    maxIterSteps = None
-    costFunc = None
 
     # routes = []         #Two dimensional array - the rows are source, the collomns are destination and the cells are list of links on the route
 
@@ -120,7 +108,9 @@ class Graph:
     #    self.CreateRandomGraph()
     #    self.NumOfLinks = self.GetNumLinks()
 
-    def __init__(self, links, users, alpha, costFunc=DefaultCostFunc, stepSize=lambda user: 1e-3, maxIterSteps=2000):
+    def __init__(self, links, users, alpha, costFunc=DefaultCostFunc, stepSize=lambda user: 1e-3, maxIterSteps=10000):
+        M = None
+        r = None
         self.N = len(users)
         self.users = users
         self.links = links
@@ -153,6 +143,18 @@ class Graph:
     def Kr(self, user):
         return self.stepSize(user)
 
+    def printGraph(self):
+        print("users:")
+        for i in range(len(self.users)):
+            print(f"user {i}:")
+            print("connected links with:")
+            for j in range(len(self.users)):
+                if not (i == j):
+                    for l in self.users[i].connectedLinks:
+                        if l.Connected(self.users[j]):
+                            print(f"connected to user {j}")
+            print("")
+
     def PrimalIterStep(self, chosenUser):
         dUr = self.DevUr(chosenUser)
         kr = self.Kr(chosenUser)
@@ -171,12 +173,18 @@ class Graph:
             XrsToPlot[i].insert(0, self.users[i].GetXr())
         for i in range(self.maxIterSteps):
             randIndex = random.randint(0, len(self.users) - 1)
+            if self.users[randIndex].HasNoRoutes():
+                continue
             chosenUser = self.users[randIndex]
-            chosenUser.SetXr(self.PrimalIterStep(chosenUser))
-            XrsToPlot[randIndex].append(chosenUser.GetXr())
-        #add plot of XrsToPlot
+            chosenUser.SetXr(chosenUser.GetXr() + self.PrimalIterStep(chosenUser))
+            for j in range(len(self.users)):
+                XrsToPlot[j].append(self.users[j].GetXr())
+
+        for i in range(len(self.users)):
+            print(f"user's {i} Xr Value is: {self.users[i].GetXr()}")
+        # plot
         for i in range(len(XrsToPlot)):
-            plt.plot(XrsToPlot[i], label=f"User {i + 1}")
+            plt.plot(XrsToPlot[i], label=f"User {i}")
         plt.xlabel("Iteration")
         plt.ylabel("Xr")
         plt.title("Xr vs. Iteration for Each User")
@@ -184,67 +192,49 @@ class Graph:
         plt.show()
 
 
-# class Link:
-#     capacity = None
-#     connectedTo = set()
-#     users = set()
-#     def __init__(self, firstUser, secondUser, capacity):
-
-# class User:
-#     x_pos = None
-#     y_pos = None
-#     connectedLinks = set()
-#     linksInRoutes = set()
-#     Xr = None
-#     def __init__(self, connectedLinks, linksInRoutes):
-
-def q4(alpha, numOfLinks):
+def q4(alpha):  # N = L + 1 = 5 +1
+    numOfLinks = 5
     users = []
     links = set()
-    # creat empty users
-    for i in range(numOfLinks + 1):
+    # create empty users
+    for i in range(numOfLinks + 2):
         users.append(User(set(), set()))
 
-    # creat the links
-    for i in range(1, numOfLinks):
+    # create the graph
+
+    for i in range(1, numOfLinks + 1):
         link = users[i].AddConnectedLink(users[i + 1], 1)
         users[0].AddlinksInRoutes(link)
         users[i].AddlinksInRoutes(link)
         link.Adduser(users[0])
         link.Adduser(users[i])
         links.add(link)
-
     G = Graph(links, users, alpha)
     G.runPrimal()
 
 
-
-
-
-# Tamplate for run:
-# python.exe .\NetworkSecurity_proj.py <question> <N> <M> <r> <alpha>
+# Template for run:
+# python.exe .\NetworkSecurity_proj.py <options>
 '''
 Arguments for program:
-question - the question that we want to test
--N - number of users
--M - radius of the simulation
--r - radius around users for links
--alpha - for alpha fairness
+-q - the question that we want to test question is 4 by default
+-alpha - for alpha fairness the alpha is 1 by default
 '''
 
 
 def main():
-    args = sys.argv[1:]
-    question = args[0]
-    N = args[1]
-    M = args[2]
-    r = args[3]
-    alpha = args[4]
+    # Default values
+    question = 4
+    alpha = 1
 
-    print(f"args[0]: {question}, args[1]: {N}, args[2]: {M}, args[3]: {r}, args[4]: {alpha}")
-    if question == "q4":
-        # N = L + 1 = 5 +1
-        q4(alpha, 5)
+    for arg in sys.argv[1:]:
+        if arg.startswith("-q"):
+            question = int(arg[2:])
+        if arg.startswith("-alpha"):
+            alpha = int(arg[6:])
+
+    if question == 4:
+        q4(alpha)
 
 
 if __name__ == "__main__":
