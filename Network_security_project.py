@@ -7,11 +7,18 @@ Thomas Mendelson 209400654
 import math
 import random
 import sys
-import numpy as np
+import matplotlib.pyplot as plt
 
 
 def DefaultCostFunc(self, sigXr):
     return math.exp(sigXr)
+
+
+def get_link(links_set, first_user, second_user):
+    for link in links_set:
+        if link.Connected(first_user) and link.Connected(second_user):
+            return link
+    return None  # If the link is not found
 
 
 class Link:
@@ -24,6 +31,8 @@ class Link:
         self.connectedTo.add(secondUser)
         self.capacity = capacity
 
+    def Addconection(self, user):
+        self.connectedTo.add(user)
     def Connected(self, user):
         return user in self.connectedTo
 
@@ -48,7 +57,7 @@ class User:
     linksInRoutes = set()
     Xr = None
 
-    #def __init__(self, M):
+    # def __init__(self, M):
     #    radius = random.uniform(0, M)
     #    theta = random.uniform(0, 2 * math.pi)
     #    self.x_pos = radius * math.cos(theta)
@@ -74,6 +83,9 @@ class User:
         self.connectedLinks.add(link)
         friend.connectedLinks.add(link)
         return link
+
+    # def AddConnectedLink(self, link):
+    #     self.connectedLinks.add(link)
 
     def AddlinksInRoutes(self, link):
         self.linksInRoutes.add(link)
@@ -162,6 +174,51 @@ class Graph:
             chosenUser = self.users[randIndex]
             chosenUser.SetXr(self.PrimalIterStep(chosenUser))
             XrsToPlot[randIndex].append(chosenUser.GetXr())
+        #add plot of XrsToPlot
+        for i in range(len(XrsToPlot)):
+            plt.plot(XrsToPlot[i], label=f"User {i + 1}")
+        plt.xlabel("Iteration")
+        plt.ylabel("Xr")
+        plt.title("Xr vs. Iteration for Each User")
+        plt.legend()
+        plt.show()
+
+
+# class Link:
+#     capacity = None
+#     connectedTo = set()
+#     users = set()
+#     def __init__(self, firstUser, secondUser, capacity):
+
+# class User:
+#     x_pos = None
+#     y_pos = None
+#     connectedLinks = set()
+#     linksInRoutes = set()
+#     Xr = None
+#     def __init__(self, connectedLinks, linksInRoutes):
+
+def q4(alpha, numOfLinks):
+    users = []
+    links = set()
+    # creat empty users
+    for i in range(numOfLinks + 1):
+        users.append(User(set(), set()))
+
+    # creat the links
+    for i in range(1, numOfLinks):
+        link = users[i].AddConnectedLink(users[i + 1], 1)
+        users[0].AddlinksInRoutes(link)
+        users[i].AddlinksInRoutes(link)
+        link.Adduser(users[0])
+        link.Adduser(users[i])
+        links.add(link)
+
+    G = Graph(links, users, alpha)
+    G.runPrimal()
+
+
+
 
 
 # Tamplate for run:
@@ -183,6 +240,11 @@ def main():
     M = args[2]
     r = args[3]
     alpha = args[4]
+
+    print(f"args[0]: {question}, args[1]: {N}, args[2]: {M}, args[3]: {r}, args[4]: {alpha}")
+    if question == "q4":
+        # N = L + 1 = 5 +1
+        q4(alpha, 5)
 
 
 if __name__ == "__main__":
