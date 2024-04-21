@@ -10,8 +10,11 @@ import sys
 import matplotlib.pyplot as plt
 
 
-def DefaultCostFunc(self, sigXr):
-    return math.exp(0.1823 * sigXr)
+# 0.1823
+def DefaultCostFunc(self, sigXr, cap):
+    if cap >= sigXr:
+        return 0
+    return math.exp(sigXr)
 
 
 def get_link(links_set, first_user, second_user):
@@ -22,12 +25,13 @@ def get_link(links_set, first_user, second_user):
 
 
 class Link:
-    def __init__(self, firstUser, secondUser, capacity):
+    def __init__(self, firstUser, secondUser, capacity, lambd = 0.20633):
         self.connectedTo = set()
         self.connectedTo.add(firstUser)
         self.connectedTo.add(secondUser)
         self.capacity = capacity
         self.users = set()
+        self.lambd = lambd
 
     def Addconection(self, user):
         self.connectedTo.add(user)
@@ -47,6 +51,12 @@ class Link:
     def RemoveUser(self, user):
         if user in self.users:
             self.users.remove(user)
+
+    def Getlambd(self):
+        return self.lambd
+
+    def Setlambd(self , lambd):
+        self.lambd = lambd
 
 
 class User:
@@ -108,7 +118,7 @@ class Graph:
     #    self.CreateRandomGraph()
     #    self.NumOfLinks = self.GetNumLinks()
 
-    def __init__(self, links, users, alpha, costFunc=DefaultCostFunc, stepSize=lambda user: 1e-3, maxIterSteps=10000):
+    def __init__(self, links, users, alpha, costFunc=DefaultCostFunc, stepSize=lambda user: 1e-3, maxIterSteps=1000000):
         M = None
         r = None
         self.N = len(users)
@@ -119,6 +129,7 @@ class Graph:
         self.stepSize = stepSize
         self.maxIterSteps = maxIterSteps
         self.costFunc = costFunc
+        self.forDebug = 10
 
     # def CreateRandomGraph(self):
     #    for i in range(self.N):
@@ -143,6 +154,9 @@ class Graph:
     def Kr(self, user):
         return self.stepSize(user)
 
+    def Hr(self, user):
+        return self.stepSize(user)
+
     def printGraph(self):
         print("users:")
         for i in range(len(self.users)):
@@ -155,6 +169,15 @@ class Graph:
                             print(f"connected to user {j}")
             print("")
 
+    def plotRun(self, XrsToPlot, Type):
+        for i in range(len(XrsToPlot)):
+            plt.plot(XrsToPlot[i], label=f"User {i}")
+        plt.xlabel("Iteration")
+        plt.ylabel("Xr")
+        plt.title(f"Xr vs. Iteration for Each User {Type}")
+        plt.legend()
+        plt.show()
+
     def PrimalIterStep(self, chosenUser):
         dUr = self.DevUr(chosenUser)
         kr = self.Kr(chosenUser)
@@ -163,10 +186,25 @@ class Graph:
             SigXr = 0
             for user in l.users:
                 SigXr += user.GetXr()
-            SigCost += self.costFunc(DefaultCostFunc, SigXr)
+            SigCost += self.costFunc(DefaultCostFunc, SigXr, l.GetCapacity())
         return kr * (dUr - SigCost)
 
-    def runPrimal(self):
+    def DualIterStep(self, chosenUser):
+        dUr = self.DevUr(chosenUser)
+        Hr = self.Hr(chosenUser)
+        Siglambd = 0
+        for l in chosenUser.linksInRoutes:
+            Siglambd += l.Getlambd()
+            yl = 0
+            for user in l.users:
+                yl += user.GetXr()
+            if l.Getlambd()>0:
+                l.Setlambd(l.Getlambd() + Hr * (yl - l.GetCapacity()))
+            else:
+                l.Setlambd(l.Getlambd() + Hr * max((yl - l.GetCapacity()),0))
+        return 1/(Siglambd**(1/self.alpha))
+
+    def run(self, Type):
         XrsToPlot = []
         for i in range(len(self.users)):
             XrsToPlot.insert(i, [])
@@ -176,21 +214,16 @@ class Graph:
             if self.users[randIndex].HasNoRoutes():
                 continue
             chosenUser = self.users[randIndex]
-            chosenUser.SetXr(chosenUser.GetXr() + self.PrimalIterStep(chosenUser))
+
+            if Type == "Primal":
+                chosenUser.SetXr(chosenUser.GetXr() + self.PrimalIterStep(chosenUser))
+            if Type == "Dual":
+                chosenUser.SetXr( self.DualIterStep(chosenUser))
             for j in range(len(self.users)):
                 XrsToPlot[j].append(self.users[j].GetXr())
-
         for i in range(len(self.users)):
             print(f"user's {i} Xr Value is: {self.users[i].GetXr()}")
-        # plot
-        for i in range(len(XrsToPlot)):
-            plt.plot(XrsToPlot[i], label=f"User {i}")
-        plt.xlabel("Iteration")
-        plt.ylabel("Xr")
-        plt.title("Xr vs. Iteration for Each User")
-        plt.legend()
-        plt.show()
-
+        self.plotRun(XrsToPlot, f"{Type} run")
 
 def q4(alpha):  # N = L + 1 = 5 +1
     numOfLinks = 5
@@ -201,7 +234,6 @@ def q4(alpha):  # N = L + 1 = 5 +1
         users.append(User(set(), set()))
 
     # create the graph
-
     for i in range(1, numOfLinks + 1):
         link = users[i].AddConnectedLink(users[i + 1], 1)
         users[0].AddlinksInRoutes(link)
@@ -209,8 +241,10 @@ def q4(alpha):  # N = L + 1 = 5 +1
         link.Adduser(users[0])
         link.Adduser(users[i])
         links.add(link)
-    G = Graph(links, users, alpha)
-    G.runPrimal()
+    #G_primal = Graph(links, users, alpha)
+    #G_primal.run("Primal")
+    G_dual = Graph(links, users, alpha, stepSize=lambda user: 1e-3)
+    G_dual.run("Dual")
 
 
 # Template for run:
