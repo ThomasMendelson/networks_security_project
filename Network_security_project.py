@@ -8,6 +8,8 @@ import math
 import random
 import sys
 import matplotlib.pyplot as plt
+from heapq import heappush, heappop
+from copy import deepcopy
 
 
 # 0.1823
@@ -25,12 +27,12 @@ def get_link(links_set, first_user, second_user):
 
 
 class Link:
-    def __init__(self, firstUser, secondUser, capacity, lambd = 0.20633):
+    def __init__(self, firstUser, secondUser, capacity, lambd=0.20633):
         self.connectedTo = set()
         self.connectedTo.add(firstUser)
         self.connectedTo.add(secondUser)
         self.capacity = capacity
-        self.users = set()
+        self.users = set()  # that using this link
         self.lambd = lambd
 
     def Addconection(self, user):
@@ -55,30 +57,34 @@ class Link:
     def Getlambd(self):
         return self.lambd
 
-    def Setlambd(self , lambd):
+    def Setlambd(self, lambd):
         self.lambd = lambd
 
 
 class User:
 
-    # def __init__(self, M):
-    #    radius = random.uniform(0, M)
-    #    theta = random.uniform(0, 2 * math.pi)
-    #    self.x_pos = radius * math.cos(theta)
-    #    self.y_pos = radius * math.sin(theta)
-    #    self.Xr = 1
-
-    def __init__(self, connectedLinks, linksInRoutes):
-        x_pos = None
-        y_pos = None
-        connectedLinks = set()
-        linksInRoutes = set()
+    def __init__(self, M=None, connectedLinks=set(), linksInRoutes=set(),
+                 x_pos=None, y_pos=None):
         self.connectedLinks = connectedLinks
         self.linksInRoutes = linksInRoutes
         self.Xr = 1
+        if M is None:
+            self.x_pos = x_pos
+            self.y_pos = y_pos
+        else:
+            radius = random.uniform(0, M)
+            theta = random.uniform(0, 2 * math.pi)
+            self.x_pos = radius * math.cos(theta)
+            self.y_pos = radius * math.sin(theta)
+
+    # def __init__(self, connectedLinks, linksInRoutes):
+    #
+    #     self.connectedLinks = connectedLinks
+    #     self.linksInRoutes = linksInRoutes
+    #     self.Xr = 1
 
     def Dist(self, friend):
-        return math.sqrt((self.x_pos - friend.x_pos) * 2 + (self.y_pos - friend.y_pos) * 2)
+        return math.sqrt((self.x_pos - friend.x_pos) ** 2 + (self.y_pos - friend.y_pos) ** 2)
 
     def IsConnectedTo(self, friend):
         for link in self.connectedLinks:
@@ -86,7 +92,7 @@ class User:
                 return True
         return False
 
-    def AddConnectedLink(self, friend, capacity):
+    def AddConnectedLink(self, friend, capacity=1):
         link = Link(self, friend, capacity)
         self.connectedLinks.add(link)
         friend.connectedLinks.add(link)
@@ -107,43 +113,43 @@ class User:
 
 class Graph:
 
-    # routes = []         #Two dimensional array - the rows are source, the collomns are destination and the cells are list of links on the route
-
-    # TODO routes are not implemented yet in the random constructor
-    # def __init__(self, N, M, r, alpha):
-    #    self.N = N
-    #    self.M = M
-    #    self.r = r
-    #    self.alpha = alpha
-    #    self.CreateRandomGraph()
-    #    self.NumOfLinks = self.GetNumLinks()
-
-    def __init__(self, links, users, alpha, costFunc=DefaultCostFunc, stepSize=lambda user: 1e-3, maxIterSteps=1000000):
-        M = None
-        r = None
-        self.N = len(users)
+    def __init__(self, N, alpha, M=None, r=None, users=[], links=set(), costFunc=DefaultCostFunc,
+                 stepSize=lambda user: 1e-3,
+                 maxIterSteps=1000000, type="random"):
+        self.N = N
+        self.M = M
+        self.r = r
         self.users = users
         self.links = links
         self.alpha = alpha
-        self.NumOfLinks = len(links)
         self.stepSize = stepSize
         self.maxIterSteps = maxIterSteps
         self.costFunc = costFunc
+        if type == "random":
+            self.CreateRandomGraph()
         self.forDebug = 10
 
-    # def CreateRandomGraph(self):
-    #    for i in range(self.N):
-    #        self.users.append(User(self.M))
-    #    for user in self.users:
-    #       for friend in self.users:
-    #            if (user == friend):
-    #                continue
-    #            if user.Dist(friend) < self.r:
-    #                if not (user.HasLink(friend)):
-    #                    self.links.add(user.AddLink(friend))
+    # def __init__(self, links, users, alpha, costFunc=DefaultCostFunc, stepSize=lambda user: 1e-3, maxIterSteps=1000000):
+    #     M = None
+    #     r = None
+    #     self.N = len(users)
+    #     self.users = users
+    #     self.links = links
+    #     self.alpha = alpha
+    #     self.stepSize = stepSize
+    #     self.maxIterSteps = maxIterSteps
+    #     self.costFunc = costFunc
+    #     self.forDebug = 10
 
-    def GetNumLinks(self):
-        return self.NumOfLinks
+    def CreateRandomGraph(self):
+        for i in range(self.N):
+            self.users.append(User(M=self.M))
+        for i, user in enumerate(self.users):
+            for j, friend in enumerate(self.users):
+                if user != friend:
+                    if user.Dist(friend) < self.r and not (user.IsConnectedTo(friend)):
+                        link = user.AddConnectedLink(friend=friend)
+                        self.links.add(link)
 
     def Ur(self, user):
         return (user.GetXr()(1 - self.alpha)) / (1 - self.alpha)
@@ -198,11 +204,39 @@ class Graph:
             yl = 0
             for user in l.users:
                 yl += user.GetXr()
-            if l.Getlambd()>0:
+            if l.Getlambd() > 0:
                 l.Setlambd(l.Getlambd() + Hr * (yl - l.GetCapacity()))
             else:
-                l.Setlambd(l.Getlambd() + Hr * max((yl - l.GetCapacity()),0))
-        return 1/(Siglambd**(1/self.alpha))
+                l.Setlambd(l.Getlambd() + Hr * max((yl - l.GetCapacity()), 0))
+        return 1 / (Siglambd ** (1 / self.alpha))
+
+    def getDijkstraMat(self):
+        all_shortest_paths = []
+
+        for source in range(self.N):
+            # Initialize distances from the source node to all other nodes as infinite
+            distances = [float('inf')] * self.N
+            paths = [[] for _ in range(self.N)]
+            distances[source] = 0
+            pq = [(0, source)]
+
+            while pq:
+                curr_dist, idx_curr_user = heappop(pq)
+                curr_user = self.users[idx_curr_user]
+                for idx_friend, friend in enumerate(self.users):
+                    if curr_user == friend:
+                        pass
+                    elif curr_user.IsConnectedTo(friend):
+                        distance_through_current = curr_dist + curr_user.Dist(friend)  # todo 1 or dist by coordinates
+
+                        if distance_through_current < distances[idx_friend]:
+                            distances[idx_friend] = distance_through_current
+                            paths[idx_friend] = deepcopy(paths[idx_curr_user])
+                            paths[idx_friend].append(curr_user)
+                            heappush(pq, (distance_through_current, idx_friend))
+
+            all_shortest_paths.append(paths)
+        return all_shortest_paths
 
     def run(self, Type):
         XrsToPlot = []
@@ -218,7 +252,7 @@ class Graph:
             if Type == "Primal":
                 chosenUser.SetXr(chosenUser.GetXr() + self.PrimalIterStep(chosenUser))
             if Type == "Dual":
-                chosenUser.SetXr( self.DualIterStep(chosenUser))
+                chosenUser.SetXr(self.DualIterStep(chosenUser))
             for j in range(len(self.users)):
                 XrsToPlot[j].append(self.users[j].GetXr())
         for i in range(len(self.users)):
@@ -231,24 +265,56 @@ def q4(alpha):  # N = L + 1 = 5 +1
     links = set()
     # create empty users
     for i in range(numOfLinks + 2):
-        users.append(User(set(), set()))
+        users.append(User(connectedLinks=set(), linksInRoutes=set()))
 
     # create the graph
     for i in range(1, numOfLinks + 1):
-        link = users[i].AddConnectedLink(users[i + 1], 1)
+        link = users[i].AddConnectedLink(friend=users[i + 1])
         users[0].AddlinksInRoutes(link)
         users[i].AddlinksInRoutes(link)
         link.Adduser(users[0])
         link.Adduser(users[i])
         links.add(link)
-    #G_primal = Graph(links, users, alpha)
-    #G_primal.run("Primal")
-    G_dual = Graph(links, users, alpha, stepSize=lambda user: 1e-3)
+
+    # G_primal = Graph(N=len(links), alpha=alpha, users=users, links=links, type="graph of Q1")
+    # G_primal.run("Primal")
+    G_dual = Graph(N=len(links), alpha=alpha, users=users, links=links, type="graph of Q1")
     G_dual.run("Dual")
 
 
+def q5(N, M, r, alpha):
+    G = Graph(N=N, M=M, r=r, alpha=alpha)
+    G.printGraph()
+    dijk_mat = G.getDijkstraMat()
+
+    shuffled_idx = list(range(len(G.users)))
+    random.shuffle(shuffled_idx)
+    for i in range(0, len(shuffled_idx), 2):
+        idx1 = shuffled_idx[i]
+        idx2 = shuffled_idx[i + 1] if i + 1 < len(shuffled_idx) else None
+        print(f"idx1: {idx1}, idx2: {idx2}")
+        if idx2 is not None:
+            if dijk_mat[idx1][idx2]:  # we can get from idx1 to idx2
+                for j, user in enumerate(dijk_mat[idx1][idx2]):
+                    # if user == G.users[idx2]:  # todo check if we add the dest to the mat in getDijkstraMat
+                    print(f"len(dijk_mat[idx1][idx2]): {len(dijk_mat[idx1][idx2])}")
+                    if j + 1 == len(dijk_mat[idx1][idx2]):
+                        print(f"in last link, j: {j}")
+                        link = get_link(G.links, user, G.users[idx2])
+                        print(f"link2: {link}")
+                    else:
+                        next_user = dijk_mat[idx1][idx2][j + 1]
+                        link = get_link(G.links, user, next_user)
+                        print(f"link3: {link}")
+                    print(f"link4: {link}")
+                    G.users[idx1].AddlinksInRoutes(link)
+                    link.Adduser(G.users[idx1])
+    G.run("Primal")
+    G.run("Dual")
+
+
 # Template for run:
-# python.exe .\NetworkSecurity_proj.py <options>
+# python.exe .\Network_security_project.py <options>
 '''
 Arguments for program:
 -q - the question that we want to test question is 4 by default
@@ -260,15 +326,26 @@ def main():
     # Default values
     question = 4
     alpha = 1
-
+    N = 10
+    M = 50
+    r = 8
+    random.seed(6)
     for arg in sys.argv[1:]:
         if arg.startswith("-q"):
             question = int(arg[2:])
         if arg.startswith("-alpha"):
             alpha = int(arg[6:])
+        if arg.startswith("-N"):
+            N = int(arg[2:])
+        if arg.startswith("-M"):
+            M = int(arg[2:])
+        if arg.startswith("-r"):
+            r = int(arg[2:])
 
     if question == 4:
         q4(alpha)
+    if question == 5:
+        q5(N, M, r, alpha)
 
 
 if __name__ == "__main__":
