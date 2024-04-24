@@ -21,12 +21,21 @@ def DefaultCostFunc(self, sigXr, cap):
 
 def get_link(links_set, first_user, second_user):
     for link in links_set:
-        if link.Connected(first_user) and link.Connected(second_user):
-            return link
+        link.printLink()
+        if link.Connected(first_user):
+            print("why only in one??????")
+            if link.Connected(second_user):
+                return link
+    print(f"link is returning Null:\n user 1:")
+    first_user.printUser()
+    print("user 2:")
+    second_user.printUser()
     return None  # If the link is not found
 
 
 class Link:
+    nameOfLinkWithinClass = 0
+
     def __init__(self, firstUser, secondUser, capacity, lambd=0.20633):
         self.connectedTo = set()
         self.connectedTo.add(firstUser)
@@ -34,6 +43,8 @@ class Link:
         self.capacity = capacity
         self.users = set()  # that using this link
         self.lambd = lambd
+        self.name = Link.nameOfLinkWithinClass
+        Link.nameOfLinkWithinClass += 1
 
     def Addconection(self, user):
         self.connectedTo.add(user)
@@ -60,14 +71,30 @@ class Link:
     def Setlambd(self, lambd):
         self.lambd = lambd
 
+    def Getname(self):
+        return self.name
+
+    def printLink(self):
+        print(f"printing Link num {self.name} (nameOfLinkInClass)")
+        print(f"Link is connecting between:")
+        for user in self.connectedTo:
+            print(f"user : {user.Getname()} (nameOfUserInClass)")
+
 
 class User:
+    nameOfUserWithinClass = 0
 
-    def __init__(self, M=None, connectedLinks=set(), linksInRoutes=set(),
+    def __init__(self, M=None, connectedLinks=None, linksInRoutes=None,
                  x_pos=None, y_pos=None):
+        if connectedLinks is None:
+            connectedLinks = set()
+        if linksInRoutes is None:
+            linksInRoutes = set()
         self.connectedLinks = connectedLinks
         self.linksInRoutes = linksInRoutes
         self.Xr = 1
+        self.name = User.nameOfUserWithinClass
+        User.nameOfUserWithinClass += 1
         if M is None:
             self.x_pos = x_pos
             self.y_pos = y_pos
@@ -110,12 +137,27 @@ class User:
     def HasNoRoutes(self):
         return 0 == len(self.linksInRoutes)
 
+    def Getname(self):
+        return self.name
+
+    def printUser(self):
+        print(f"printing User num {self.name} (nameOfLinkInClass)")
+        if (self.x_pos is not None) and (self.y_pos is not None):
+            print(f"x pos: {self.x_pos}\ny pos: {self.y_pos}")
+        print(f"User is connected to Links:")
+        for link in self.connectedLinks:
+            print(f"link : {link.Getname()} (nameOfUserInClass)")
+        print(f"User is using links:")
+        for link in self.linksInRoutes:
+            print(f"link : {link.Getname()} (nameOfUserInClass)")
+
+
 
 class Graph:
 
     def __init__(self, N, alpha, M=None, r=None, users=[], links=set(), costFunc=DefaultCostFunc,
                  stepSize=lambda user: 1e-3,
-                 maxIterSteps=1000000, type="random"):
+                 maxIterSteps=1000000):
         self.N = N
         self.M = M
         self.r = r
@@ -125,7 +167,7 @@ class Graph:
         self.stepSize = stepSize
         self.maxIterSteps = maxIterSteps
         self.costFunc = costFunc
-        if type == "random":
+        if users == []:
             self.CreateRandomGraph()
         self.forDebug = 10
 
@@ -142,14 +184,15 @@ class Graph:
     #     self.forDebug = 10
 
     def CreateRandomGraph(self):
-        for i in range(self.N):
-            self.users.append(User(M=self.M))
-        for i, user in enumerate(self.users):
-            for j, friend in enumerate(self.users):
-                if user != friend:
-                    if user.Dist(friend) < self.r and not (user.IsConnectedTo(friend)):
-                        link = user.AddConnectedLink(friend=friend)
-                        self.links.add(link)
+      for i in range(self.N):
+          self.users.append(User(M=self.M))
+      for i, user in enumerate(self.users):
+          for j, friend in enumerate(self.users):
+              if user != friend:
+                  if user.Dist(friend) < self.r and not (user.IsConnectedTo(friend)):
+                      link = user.AddConnectedLink(friend=friend)
+                      self.links.add(link)
+      print("\n\n\n")
 
     def Ur(self, user):
         return (user.GetXr()(1 - self.alpha)) / (1 - self.alpha)
@@ -167,6 +210,7 @@ class Graph:
         print("users:")
         for i in range(len(self.users)):
             print(f"user {i}:")
+            self.users[i].printUser()
             print("connected links with:")
             for j in range(len(self.users)):
                 if not (i == j):
@@ -227,7 +271,7 @@ class Graph:
                     if curr_user == friend:
                         pass
                     elif curr_user.IsConnectedTo(friend):
-                        distance_through_current = curr_dist + curr_user.Dist(friend)  # todo 1 or dist by coordinates
+                        distance_through_current = curr_dist + 1  # todo 1 or dist by coordinates
 
                         if distance_through_current < distances[idx_friend]:
                             distances[idx_friend] = distance_through_current
@@ -276,15 +320,15 @@ def q4(alpha):  # N = L + 1 = 5 +1
         link.Adduser(users[i])
         links.add(link)
 
-    # G_primal = Graph(N=len(links), alpha=alpha, users=users, links=links, type="graph of Q1")
-    # G_primal.run("Primal")
-    G_dual = Graph(N=len(links), alpha=alpha, users=users, links=links, type="graph of Q1")
+    G_primal = Graph(N=len(links), alpha=alpha, users=users, links=links)
+    G_primal.run("Primal")
+    G_dual = Graph(N=len(links), alpha=alpha, users=users, links=links)
     G_dual.run("Dual")
 
 
 def q5(N, M, r, alpha):
     G = Graph(N=N, M=M, r=r, alpha=alpha)
-    G.printGraph()
+    #G.printGraph() #for debug
     dijk_mat = G.getDijkstraMat()
 
     shuffled_idx = list(range(len(G.users)))
@@ -292,24 +336,27 @@ def q5(N, M, r, alpha):
     for i in range(0, len(shuffled_idx), 2):
         idx1 = shuffled_idx[i]
         idx2 = shuffled_idx[i + 1] if i + 1 < len(shuffled_idx) else None
-        print(f"idx1: {idx1}, idx2: {idx2}")
+        print(f"idx1: {idx1}, idx2: {idx2}") #for debug
+        print(f"path is :")
         if idx2 is not None:
             if dijk_mat[idx1][idx2]:  # we can get from idx1 to idx2
                 for j, user in enumerate(dijk_mat[idx1][idx2]):
-                    # if user == G.users[idx2]:  # todo check if we add the dest to the mat in getDijkstraMat
-                    print(f"len(dijk_mat[idx1][idx2]): {len(dijk_mat[idx1][idx2])}")
                     if j + 1 == len(dijk_mat[idx1][idx2]):
-                        print(f"in last link, j: {j}")
                         link = get_link(G.links, user, G.users[idx2])
-                        print(f"link2: {link}")
+                        print(f"user : {user.Getname()} , next user {G.users[idx2].Getname()}")
                     else:
                         next_user = dijk_mat[idx1][idx2][j + 1]
+                        print(f"user : {user.Getname()} , next user {next_user.Getname()}")
                         link = get_link(G.links, user, next_user)
-                        print(f"link3: {link}")
-                    print(f"link4: {link}")
-                    G.users[idx1].AddlinksInRoutes(link)
-                    link.Adduser(G.users[idx1])
-    G.run("Primal")
+                    if link is not None:
+                        G.users[idx1].AddlinksInRoutes(link)
+                        link.Adduser(G.users[idx1])
+                        print(f"{link.Getname()}")
+                    else:
+                        print("Link is None!!!!")
+        print("")
+
+    #G.run("Primal")
     G.run("Dual")
 
 
@@ -317,18 +364,21 @@ def q5(N, M, r, alpha):
 # python.exe .\Network_security_project.py <options>
 '''
 Arguments for program:
--q - the question that we want to test question is 4 by default
--alpha - for alpha fairness the alpha is 1 by default
+-N - the number of users                                  10 by default
+-M - the radius of the world                              50 by default
+-r - the maximus radius between two connected users       8  by default
+-q - the question that we want to test question           4  by default
+-alpha - for alpha fairness the alpha                     1  by default
 '''
 
 
 def main():
     # Default values
-    question = 4
+    question = 5
     alpha = 1
     N = 10
     M = 50
-    r = 8
+    r = 20
     random.seed(6)
     for arg in sys.argv[1:]:
         if arg.startswith("-q"):
