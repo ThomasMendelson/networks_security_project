@@ -13,19 +13,18 @@ from heapq import heappush, heappop
 import numpy as np
 
 
-
-# 0.1823
 def DefaultCostFunc(self, sigXr, cap):
     if cap >= sigXr:
         return 0
     return math.exp(sigXr)
 
 
-def get_link(links_set, first_user, second_user):
+def get_link(links_set, fromUser, toUser):
     for link in links_set:
-        if link.Connected(first_user) and link.Connected(second_user):
+        if link.GetFromUser() == fromUser and link.GetToUser() == toUser:
             return link
     return None  # If the link is not found
+
 
 def copy_array(arr):
     new_arr = []
@@ -36,6 +35,7 @@ def copy_array(arr):
 
 class Flow:
     nameOfFlowWithinClass = 0
+
     def __init__(self, destUser, srcUser, pktSize):
         self.destUser = destUser
         self.srcUser = srcUser
@@ -58,8 +58,11 @@ class Flow:
     def GetpktSize(self):
         return self.pktSize
 
-    def SetLinks(self , links):
+    def SetLinks(self, links):
         self.links = links
+
+    def GetLinks(self):
+        return self.links
 
     def printFlow(self):
         print(f"Flow number : {self.name}")
@@ -68,7 +71,7 @@ class Flow:
         print(f"pkt size : {self.pktSize}")
         print("links in flow:")
         for link in self.links:
-            print(f"{link.Getname()} ",end="")
+            print(f"{link.Getname()} ", end="")
         print("")
 
     def SetXr(self, xr):
@@ -81,25 +84,24 @@ class Flow:
 class Link:
     nameOfLinkWithinClass = 0
 
-    def __init__(self, firstUser, secondUser, capacity = None, lambd=0.20633 , scale=np.sqrt(0.5)):
-        self.connectedTo = []
-        self.connectedTo.append(firstUser)
-        self.connectedTo.append(secondUser)
+    def __init__(self, fromUser, toUser, capacity=None, lambd=0.20633, scale=np.sqrt(0.5)):
+        self.fromUser = fromUser
+        self.toUser = toUser
         self.flows = set()  # that using this link
         self.lambd = lambd
         self.scale = scale
         self.gain = self.CalcGain(self.scale)
-        if capacity == None:
+        if capacity is None:
             capacity = self.CalcCapacity()
         self.capacity = capacity
         self.name = Link.nameOfLinkWithinClass
         Link.nameOfLinkWithinClass += 1
 
-    def Addconection(self, user):
-        self.connectedTo.append(user)
+    def GetFromUser(self):
+        return self.fromUser
 
-    def Connected(self, user):
-        return user in self.connectedTo
+    def GetToUser(self):
+        return self.toUser
 
     def SetCapacity(self, n):
         self.capacity = n
@@ -124,37 +126,42 @@ class Link:
         return self.name
 
     def CalcGain(self, scale):
-        smallScaleFading = np.random.rayleigh(scale=scale, size=1)
-        dist = self.connectedTo[0].Dist(self.connectedTo[1])
-        gain = 1 / (smallScaleFading * np.sqrt(dist + (4 * np.pi / 3e8)))
-        return np.abs(gain)
+        if self.fromUser.HasLocation() and self.toUser.HasLocation():
+            smallScaleFading = np.random.rayleigh(scale=scale, size=1)
+            dist = self.fromUser.Dist(self.toUser)
+            gain = 1 / (smallScaleFading * np.sqrt(dist + (4 * np.pi / 3e8)))
+            return np.abs(gain)
+        else:
+            return None
 
     def CalcCapacity(self):
-        capToReturn = []
-        user1Bw = self.connectedTo[0].GetBw()
-        user2Bw = self.connectedTo[1].GetBw()
-        power1 = self.connectedTo[0].GetPower() * self.gain
-        power2 = self.connectedTo[1].GetPower() * self.gain
-        interference1 = self.connectedTo[0].GetSumInterference()
-        interference2 = self.connectedTo[1].GetSumInterference()
-        sinr1 = power1 / (interference2 + 1)
-        sinr2 = power2 / (interference1 + 1)
-        capToReturn.append = user1Bw * math.log2(1 + sinr1)
-        capToReturn.append = user2Bw * math.log2(1 + sinr2)
+        if self.gain is not None:
+            userFromBw = self.fromUser.GetBw()
+            userFromPower = self.fromUser.GetPower() * self.gain
+            userToInterference2 = self.toUser.GetSumInterference()
+            SINR = userFromPower / (userToInterference2 + 1)
+            return userFromBw * math.log2(1 + SINR)
+        else:
+            return 1
+
+    def GetTDMAVal(self, flow):
+        sumOfData = 0
+        for f in self.flows:
+            sumOfData += f.GetpktSize()
+        return self.capacity*(flow.GetpktSize()/sumOfData)
 
     def printLink(self):
         print(f"printing Link num {self.name} (nameOfLinkInClass)")
-        print(f"Link is connecting between:")
-        for user in self.connectedTo:
-            print(f"user : {user.Getname()} (nameOfUserInClass)")
+        print(f"Link is From user : {self.fromUser.Getname()} to user : {self.toUser.Getname()}")
 
 
 class User:
     nameOfUserWithinClass = 0
 
-    def __init__(self, M=None, x_pos=None, y_pos=None , powerFunc = lambda: 0, bwFunc = lambda: 1):
-        self.connectedLinks = set()
-        self.flowFromMe = set()
+    def __init__(self, M=None, x_pos=None, y_pos=None, powerFunc=lambda: 0, bwFunc=lambda: 1):
+        self.linkFromUser = set()
+        self.linkToUser = set()
+        self.flowsFromMe = set()
         self.name = User.nameOfUserWithinClass
         User.nameOfUserWithinClass += 1
         if M is None:
@@ -178,38 +185,49 @@ class User:
     def GetPower(self):
         return self.power
 
-
-    def IsConnectedTo(self, friend):
-        for link in self.connectedLinks:
-            if link.Connected(friend):
+    def CanGetToUser(self, friend):
+        for link in self.linkFromUser:
+            if link.GetToUser() == friend:
                 return True
         return False
 
-    def AddConnectedLink(self, friend, capacity=[1,1]):
+    def UserCanGetToMe(self, friend):
+        for link in self.linkToUser:
+            if link.GetFromUser() == friend:
+                return True
+        return False
+
+    def AddLinkTo(self, friend, capacity=1):
         link = Link(self, friend, capacity)
-        self.connectedLinks.add(link)
-        friend.connectedLinks.add(link)
+        self.linkFromUser.add(link)
+        friend.linkToUser.add(link)
         return link
 
     def AddFlow(self, flow):
-        self.flowFromMe.add(flow)
+        self.flowsFromMe.add(flow)
 
     def HasNoFlows(self):
-        return 0 == len(self.flowFromMe)
+        return 0 == len(self.flowsFromMe)
 
     def Getname(self):
         return self.name
 
+    def HasLocation(self):
+        return (self.x_pos is not None) and (self.y_pos is not None)
+
     def printUser(self):
         print(f"printing User num {self.name} (nameOfLinkInClass)")
-        if (self.x_pos is not None) and (self.y_pos is not None):
+        if self.HasLocation():
             print(f"x pos: {self.x_pos}\ny pos: {self.y_pos}")
-        print(f"User is connected to Links:")
-        for link in self.connectedLinks:
+        print(f"User is Has Going Out Links:")
+        for link in self.linkFromUser:
+            print(f"link : {link.Getname()} (nameOfUserInClass)")
+        print(f"User is Has Going In Links:")
+        for link in self.linkToUser:
             print(f"link : {link.Getname()} (nameOfUserInClass)")
         print(f"User flows:")
-        for flow in self.flowFromMe:
-            print(f"{flow.Getname()} ",end="")
+        for flow in self.flowsFromMe:
+            print(f"{flow.Getname()} ", end="")
 
     def SetSumInterference(self, sumInterference):
         self.interference = sumInterference
@@ -220,26 +238,27 @@ class User:
 
 class Graph:
 
-    def __init__(self, N, alpha, M=None, r=None, users=None, flows = None, links=None, costFunc=DefaultCostFunc, stepSize=lambda flow: 1e-3, maxIterSteps=1000000 , interferenceFunc = lambda: 0):
+    def __init__(self, N, alpha, M=None, r=None, users=None, flows=None, links=None, costFunc=DefaultCostFunc,
+                 stepSize=lambda flow: 1e-3, maxIterSteps=1000000, interferenceFunc=lambda: 0):
         self.N = N
         self.M = M
         self.r = r
-        if users == None:
+        if users is None:
             users = []
         self.users = users
-        if flows == None:
+        if flows is None:
             flows = []
         self.flows = flows
-        if links == None:
+        if links is None:
             links = set()
         self.links = links
         self.alpha = alpha
         self.stepSize = stepSize
         self.maxIterSteps = maxIterSteps
         self.costFunc = costFunc
-        if users == []:
+        if not users:
             self.CreateRandomGraph()
-        self.CalcInterfirence(interferenceFunc)
+        self.CalcInterference(interferenceFunc)
 
     def CreateRandomGraph(self):
         for i in range(self.N):
@@ -247,24 +266,26 @@ class Graph:
         for i, user in enumerate(self.users):
             for j, friend in enumerate(self.users):
                 if user != friend:
-                    if user.Dist(friend) < self.r and not (user.IsConnectedTo(friend)):
-                        link = user.AddConnectedLink(friend=friend)
+                    if user.Dist(friend) < self.r:
+                        link = user.AddLinkTo(friend=friend)
                         self.links.add(link)
 
     def CalcInterference(self, func):
         for user in self.users:
-            sumInterference = 0
-            for friend in self.users:
-                if user == friend:
-                    continue
-                sumInterference += user.Dist(friend) * func()
-            user.SetSumInterference(sumInterference)
-
+            if user.HasLocation():
+                sumInterference = 0
+                for friend in self.users:
+                    if user == friend:
+                        continue
+                    sumInterference += user.Dist(friend) * func()
+                user.SetSumInterference(sumInterference)
+            else:
+                user.SetSumInterference(0)
 
     def GetUsers(self):
         return self.users
 
-    def resetXrs(self, val = 1):
+    def resetXrs(self, val=1):
         for flow in self.flows:
             flow.SetXr(val)
 
@@ -290,12 +311,12 @@ class Graph:
             self.users[i].printUser()
         print("")
 
-    def plotRun(self, XrsToPlot, Type):
-        for i in range(len(XrsToPlot)):
-            plt.plot(XrsToPlot[i], label=f"User {i}")
+    def plotRun(self, xrsToPlot, tp):
+        for i in range(len(xrsToPlot)):
+            plt.plot(xrsToPlot[i], label=f"User {i}")
         plt.xlabel("Iteration")
         plt.ylabel("Xr")
-        plt.title(f"Xr vs. Iteration for Each User {Type}")
+        plt.title(f"Xr vs. Iteration for Each User {tp}")
         plt.legend()
         plt.show()
 
@@ -327,51 +348,58 @@ class Graph:
 
     def getDijkstraMat(self):
         all_shortest_paths = []
-
         for source in range(self.N):
             # Initialize distances from the source node to all other nodes as infinite
             distances = [float('inf')] * self.N
             paths = [[] for _ in range(self.N)]
             distances[source] = 0
             pq = [(0, source)]
-
             while pq:
                 curr_dist, idx_curr_user = heappop(pq)
                 curr_user = self.users[idx_curr_user]
                 for idx_friend, friend in enumerate(self.users):
                     if curr_user == friend:
                         pass
-                    elif curr_user.IsConnectedTo(friend):
+                    elif curr_user.CanGetToUser(friend):
                         distance_through_current = curr_dist + 1  # todo 1 or dist by coordinates
-
                         if distance_through_current < distances[idx_friend]:
                             distances[idx_friend] = distance_through_current
                             paths[idx_friend] = copy_array(paths[idx_curr_user])
                             paths[idx_friend].append(curr_user)
                             heappush(pq, (distance_through_current, idx_friend))
-
             all_shortest_paths.append(paths)
         return all_shortest_paths
 
-    def run(self, Type):
-        XrsToPlot = []
-        for i , flow in enumerate(self.flows):
-            XrsToPlot.insert(i, [])
-            XrsToPlot[i].insert(0, flow.GetXr())
-        for i in range(self.maxIterSteps):
-            randIndex = random.randint(0, len(self.flows) - 1)
-            chosenFlow = self.flows[randIndex]
-            if Type == "Primal":
-                chosenFlow.SetXr(chosenFlow.GetXr() + self.PrimalIterStep(chosenFlow))
-            if Type == "Dual":
-                chosenFlow.SetXr(self.DualIterStep(chosenFlow))
-            for j, flow in enumerate(self.flows):
-                XrsToPlot[j].append(flow.GetXr())
-        for i , flow in enumerate(self.flows):                                        #for debug
-            print(f"flow's {i} Xr Value is: {flow.GetXr()}")                          #for debug
-        self.plotRun(XrsToPlot, f"{Type} run")
+    def CalcXrsTDMA(self):
+        xrsVec = [0] * len(self.flows)
+        for i, flow in enumerate(self.flows):
+            xrsInLinkForFlow = []
+            for j, link in enumerate(flow.GetLinks()):
+                xrsInLinkForFlow.append(link.GetTDMAVal(flow))
+            xrsVec[i] = min(xrsInLinkForFlow)
+        for i in range(len(xrsVec)):  # for debug
+            print(f"flow's {i} Xr Value is: {xrsVec[i]}")  # for debug
 
-
+    def run(self, tp):
+        if tp == "TDMA":
+            self.CalcXrsTDMA()
+        else:
+            XrsToPlot = []
+            for i, flow in enumerate(self.flows):
+                XrsToPlot.insert(i, [])
+                XrsToPlot[i].insert(0, flow.GetXr())
+            for i in range(self.maxIterSteps):
+                randIndex = random.randint(0, len(self.flows) - 1)
+                chosenFlow = self.flows[randIndex]
+                if tp == "Primal":
+                    chosenFlow.SetXr(chosenFlow.GetXr() + self.PrimalIterStep(chosenFlow))
+                if tp == "Dual":
+                    chosenFlow.SetXr(self.DualIterStep(chosenFlow))
+                for j, flow in enumerate(self.flows):
+                    XrsToPlot[j].append(flow.GetXr())
+            for i, flow in enumerate(self.flows):  # for debug
+                print(f"flow's {i} Xr Value is: {flow.GetXr()}")  # for debug
+            self.plotRun(XrsToPlot, f"{tp} run")
 
 
 def q4(alpha):  # N = L + 1 = 5 +1
@@ -384,41 +412,39 @@ def q4(alpha):  # N = L + 1 = 5 +1
         users.append(User())
 
     flow0 = []
-    #create empty flows
+    # create empty flows
     flows.append(Flow(users[0], users[5], 1))
     for i in range(numOfLinks):
-        flows.append(Flow(users[i], users[i+1], 1))
+        flows.append(Flow(users[i], users[i + 1], 1))
 
     # create links and connect to flows
     for i in range(numOfLinks):
-        link = users[i].AddConnectedLink(friend=users[i + 1])
+        link = users[i].AddLinkTo(friend=users[i + 1])
         flow0.append(link)
-        flows[i+1].SetLinks([link])
+        flows[i + 1].SetLinks([link])
         link.AddFlow(flows[0])
-        link.AddFlow(flows[i+1])
+        link.AddFlow(flows[i + 1])
     flows[0].SetLinks(flow0)
 
-    G = Graph(6, alpha, users = users, flows = flows, links = links)
+    G = Graph(6, alpha, users=users, flows=flows, links=links)
     G.run("Primal")
     G.resetXrs()
     G.run("Dual")
 
 
 def GetRandomFlow(N):
-    source = random.randint(0, N-1)
+    source = random.randint(0, N - 1)
     while True:
-        dest = random.randint(0, N-1)
+        dest = random.randint(0, N - 1)
         if dest != source:
             break
-    pkt_size = random.randint(1, 10)*5
+    pkt_size = random.randint(1, 10) * 5
     return source, dest, pkt_size
 
 
-def q5(N, M, r, alpha, flowsNum):
-
+def CreateGraphWithDijkstraRandomFlows(N, M, r, alpha, flowsNum):
     G = Graph(N=N, M=M, r=r, alpha=alpha)
     dijk_mat = G.getDijkstraMat()
-
     shuffled_idx = list(range(len(G.users)))
     random.shuffle(shuffled_idx)
     users = G.GetUsers()
@@ -440,30 +466,18 @@ def q5(N, M, r, alpha, flowsNum):
                 else:
                     print("Link is None!!!!")
             flow.SetLinks(links)
+    return G
+
+
+def q5(N, M, r, alpha, flowsNum):
+    G = CreateGraphWithDijkstraRandomFlows(N, M, r, alpha, flowsNum)
     G.run("Primal")
     G.run("Dual")
 
-def q6(N, M, r, alpha):
-    G = Graph(N=N, M=M, r=r, alpha=alpha)
-    dijk_mat = G.getDijkstraMat()
-    shuffled_idx = list(range(len(G.users)))
-    random.shuffle(shuffled_idx)
-    for i in range(0, len(shuffled_idx), 2):
-        idx1 = shuffled_idx[i]
-        idx2 = shuffled_idx[i + 1] if i + 1 < len(shuffled_idx) else None
-        if idx2 is not None:
-            if dijk_mat[idx1][idx2]:  # we can get from idx1 to idx2
-                for j, user in enumerate(dijk_mat[idx1][idx2]):
-                    if j + 1 == len(dijk_mat[idx1][idx2]):
-                        link = get_link(G.links, user, G.users[idx2])
-                    else:
-                        next_user = dijk_mat[idx1][idx2][j + 1]
-                        link = get_link(G.links, user, next_user)
-                    if link is not None:
-                        G.users[idx1].AddlinksInRoutes(link)
-                        link.Adduser(G.users[idx1])
-                    else:
-                        print("Link is None!!!!")
+
+def q6(N, M, r, alpha, flowsNum):
+    G = CreateGraphWithDijkstraRandomFlows(N, M, r, alpha, flowsNum)
+    G.run("TDMA")
 
 
 # Template for run:
@@ -481,11 +495,11 @@ Arguments for program:
 
 def main():
     # Default values
-    question = 5
+    question = 6
     alpha = 1
-    N = 10
-    M = 50
-    r = 8
+    N = 50
+    M = 30
+    r = 10
     flowsNum = N
     random.seed(15)
     for arg in sys.argv[1:]:
