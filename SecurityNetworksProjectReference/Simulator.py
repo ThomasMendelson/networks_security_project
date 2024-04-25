@@ -376,7 +376,8 @@ class Network:
 
                 # Shanon
                 link_capacity = np.minimum(link_bandwidth,
-                                           np.maximum(1, np.floor(link_bandwidth * np.log2(1 + sinr))))
+                                           np.maximum(1,
+                                                      np.floor(link_bandwidth * np.log2(1 + sinr))))
 
                 # If multiple links transmit on same link, divide the capacity
 
