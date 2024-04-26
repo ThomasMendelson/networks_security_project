@@ -9,11 +9,11 @@ import math
 import random
 import sys
 import matplotlib.pyplot as plt
-from heapq import heappush, heappop
+from heapq import heappush, heappop, _heappop_max
 import numpy as np
 
 
-def DefaultCostFunc(self, sigXr, cap):
+def DefaultCostFunc(sigXr, cap):
     if cap >= sigXr:
         return 0
     return math.exp(sigXr)
@@ -32,11 +32,19 @@ def copy_array(arr):
         new_arr.append(i)
     return new_arr
 
+def GetFlowByName(flows,flowName):
+    for flow in flows:
+        if flowName == flow.Getname():
+            return flow
+    return None
+
+
+
 
 class Flow:
     nameOfFlowWithinClass = 0
 
-    def __init__(self, destUser, srcUser, pktSize):
+    def __init__(self, destUser, srcUser, pktSize, K=1):
         self.destUser = destUser
         self.srcUser = srcUser
         self.pktSize = pktSize
@@ -45,6 +53,8 @@ class Flow:
         Flow.nameOfFlowWithinClass += 1
         self.Xr = 1
         srcUser.AddFlow(self)
+        self.K = K
+        self.linkChannels = {}
 
     def Getname(self):
         return self.name
@@ -66,8 +76,8 @@ class Flow:
 
     def printFlow(self):
         print(f"Flow number : {self.name}")
-        print(f"Source : {self.srcUser}")
-        print(f"Destination : {self.destUser}")
+        print(f"Source : {self.srcUser.Getname()}")
+        print(f"Destination : {self.destUser.Getname()}")
         print(f"pkt size : {self.pktSize}")
         print("links in flow:")
         for link in self.links:
@@ -79,6 +89,13 @@ class Flow:
 
     def GetXr(self):
         return self.Xr
+
+    def AddChannelToLink(self, link, k):
+        self.linkChannels[link] = k
+
+    def GetK(self, link):
+        return self.linkChannels[link]
+
 
 
 class Link:
@@ -147,8 +164,12 @@ class Link:
     def GetTDMAVal(self, flow):
         sumOfData = 0
         for f in self.flows:
-            sumOfData += f.GetpktSize()
+            if flow.GetK(self) == f.GetK(self):
+                sumOfData += f.GetpktSize()
         return self.capacity*(flow.GetpktSize()/sumOfData)
+
+    def GetFlows(self):
+        return self.flows
 
     def printLink(self):
         print(f"printing Link num {self.name} (nameOfLinkInClass)")
@@ -239,7 +260,7 @@ class User:
 class Graph:
 
     def __init__(self, N, alpha, M=None, r=None, users=None, flows=None, links=None, costFunc=DefaultCostFunc,
-                 stepSize=lambda flow: 1e-3, maxIterSteps=1000000, interferenceFunc=lambda: 0):
+                 stepSize=lambda flow: 1e-3, maxIterSteps=1000000, interferenceFunc=lambda: 0, K=1):
         self.N = N
         self.M = M
         self.r = r
@@ -259,6 +280,7 @@ class Graph:
         if not users:
             self.CreateRandomGraph()
         self.CalcInterference(interferenceFunc)
+        self.K = K
 
     def CreateRandomGraph(self):
         for i in range(self.N):
@@ -370,7 +392,33 @@ class Graph:
             all_shortest_paths.append(paths)
         return all_shortest_paths
 
-    def CalcXrsTDMA(self):
+    def CreatKminHeap(self):
+        KminHeap = []
+        for i in range(self.K):
+            heappush(KminHeap, (0, i))
+        return KminHeap
+
+    def CreateFlowDataMaxHeap(self, link):
+        flowDataMaxHeap = []
+        for flow in link.GetFlows():
+            heappush(flowDataMaxHeap, (flow.GetpktSize(), flow.Getname()))
+        return flowDataMaxHeap
+
+    def ConnectLinksToFlowsChannels(self):
+        for link in self.links:
+            KminHeap = self.CreatKminHeap()
+            flowDataMaxHeap = self.CreateFlowDataMaxHeap(link)
+            while flowDataMaxHeap:
+                pktSize, flowName = _heappop_max(flowDataMaxHeap)
+                sumData, k = heappop(KminHeap)
+                flow = GetFlowByName(link.GetFlows(),flowName)
+                if flow is not None:
+                    flow.AddChannelToLink(link, k)
+                sumData += pktSize
+                heappush(KminHeap, (sumData, k))
+
+    def runTDMA(self):
+        self.ConnectLinksToFlowsChannels()
         xrsVec = [0] * len(self.flows)
         for i, flow in enumerate(self.flows):
             xrsInLinkForFlow = []
@@ -379,27 +427,25 @@ class Graph:
             xrsVec[i] = min(xrsInLinkForFlow)
         for i in range(len(xrsVec)):  # for debug
             print(f"flow's {i} Xr Value is: {xrsVec[i]}")  # for debug
+        return xrsVec
 
     def run(self, tp):
-        if tp == "TDMA":
-            self.CalcXrsTDMA()
-        else:
-            XrsToPlot = []
-            for i, flow in enumerate(self.flows):
-                XrsToPlot.insert(i, [])
-                XrsToPlot[i].insert(0, flow.GetXr())
-            for i in range(self.maxIterSteps):
-                randIndex = random.randint(0, len(self.flows) - 1)
-                chosenFlow = self.flows[randIndex]
-                if tp == "Primal":
-                    chosenFlow.SetXr(chosenFlow.GetXr() + self.PrimalIterStep(chosenFlow))
-                if tp == "Dual":
-                    chosenFlow.SetXr(self.DualIterStep(chosenFlow))
-                for j, flow in enumerate(self.flows):
-                    XrsToPlot[j].append(flow.GetXr())
-            for i, flow in enumerate(self.flows):  # for debug
-                print(f"flow's {i} Xr Value is: {flow.GetXr()}")  # for debug
-            self.plotRun(XrsToPlot, f"{tp} run")
+        XrsToPlot = []
+        for i, flow in enumerate(self.flows):
+            XrsToPlot.insert(i, [])
+            XrsToPlot[i].insert(0, flow.GetXr())
+        for i in range(self.maxIterSteps):
+            randIndex = random.randint(0, len(self.flows) - 1)
+            chosenFlow = self.flows[randIndex]
+            if tp == "Primal":
+                chosenFlow.SetXr(chosenFlow.GetXr() + self.PrimalIterStep(chosenFlow))
+            if tp == "Dual":
+                chosenFlow.SetXr(self.DualIterStep(chosenFlow))
+            for j, flow in enumerate(self.flows):
+                XrsToPlot[j].append(flow.GetXr())
+        for i, flow in enumerate(self.flows):  # for debug
+            print(f"flow's {i} Xr Value is: {flow.GetXr()}")  # for debug
+        self.plotRun(XrsToPlot, f"{tp} run")
 
 
 def q4(alpha):  # N = L + 1 = 5 +1
@@ -442,8 +488,8 @@ def GetRandomFlow(N):
     return source, dest, pkt_size
 
 
-def CreateGraphWithDijkstraRandomFlows(N, M, r, alpha, flowsNum):
-    G = Graph(N=N, M=M, r=r, alpha=alpha)
+def CreateGraphWithDijkstraRandomFlows(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 0, K=1):
+    G = Graph(N=N, M=M, r=r, alpha=alpha, interferenceFunc=interferenceFunc, K=K)
     dijk_mat = G.getDijkstraMat()
     shuffled_idx = list(range(len(G.users)))
     random.shuffle(shuffled_idx)
@@ -451,7 +497,7 @@ def CreateGraphWithDijkstraRandomFlows(N, M, r, alpha, flowsNum):
     for i in range(0, flowsNum):
         source, dest, pkt_size = GetRandomFlow(len(G.users))
         if dijk_mat[source][dest]:  # we can get from idx1 to idx2
-            flow = Flow(users[source], users[dest], pkt_size)
+            flow = Flow(users[source], users[dest], pkt_size, K=K)
             G.AddFlow(flow)
             links = []
             for j, user in enumerate(dijk_mat[source][dest]):
@@ -474,10 +520,57 @@ def q5(N, M, r, alpha, flowsNum):
     G.run("Primal")
     G.run("Dual")
 
+def plotGraph(graph, xAxis, title):
+    plt.figure(figsize=(10, 6))  # Increasing plot size
+
+    for i in range(len(graph)):
+        plt.plot(graph[i], marker='o', label=f"Flow {i}")  # Using markers for data points
+
+    plt.xlabel(f"{xAxis}")
+    plt.ylabel("Xr")
+    plt.title(title)  # Adding a descriptive title
+    plt.legend()  # Adding a legend
+    plt.show()
+
+def GraphVarNumUsers(N, M, r, alpha, flowsNum, interferenceFunc, K=1):
+    dataToGraph = []
+    for i in range(1, 11):
+        G = CreateGraphWithDijkstraRandomFlows(i*N, M, r, alpha, flowsNum, interferenceFunc=interferenceFunc ,K=K)
+        dataToGraph.append(G.runTDMA())
+    plotGraph(dataToGraph, "N", "Xr vs. Number of Users")
+
+def GraphVarNumFlows(N, M, r, alpha, flowsNum, interferenceFunc, K=1):
+    dataToGraph = []
+    for i in range(1, 11):
+        G = CreateGraphWithDijkstraRandomFlows(N, M, r, alpha,i*flowsNum, interferenceFunc=interferenceFunc ,K=K)
+        dataToGraph.append(G.runTDMA())
+    plotGraph(dataToGraph, "Number of Flows", "Xr vs. Number of Flows")
+
+def GraphVarRadiusM(N, M, r, alpha, flowsNum, interferenceFunc, K=1):
+    dataToGraph = []
+    for i in range(1, 11):
+        G = CreateGraphWithDijkstraRandomFlows(N, i*M, r, alpha, flowsNum, interferenceFunc=interferenceFunc ,K=K)
+        dataToGraph.append(G.runTDMA())
+    plotGraph(dataToGraph, "M", "Xr vs. Radius (M)")
+
+def GraphVarRadiusR(N, M, r, alpha, flowsNum, interferenceFunc, K=1):
+    dataToGraph = []
+    for i in range(1, 11):
+        G = CreateGraphWithDijkstraRandomFlows(N, M, i*r, alpha, flowsNum, interferenceFunc=interferenceFunc ,K=K)
+        dataToGraph.append(G.runTDMA())
+    plotGraph(dataToGraph, "r", "Xr vs. Radius (r)")
 
 def q6(N, M, r, alpha, flowsNum):
-    G = CreateGraphWithDijkstraRandomFlows(N, M, r, alpha, flowsNum)
-    G.run("TDMA")
+    GraphVarNumUsers(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1)
+    GraphVarNumFlows(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1)
+    GraphVarRadiusM(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1)
+    GraphVarRadiusR(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1)
+
+def q7(N, M, r, alpha, flowsNum, K=1):
+    GraphVarNumUsers(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1, K=K)
+    GraphVarNumFlows(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1, K=K)
+    GraphVarRadiusM(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1, K=K)
+    GraphVarRadiusR(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1, K=K)
 
 
 # Template for run:
@@ -489,18 +582,20 @@ Arguments for program:
 -r - the maximus radius between two connected users       8  by default
 -q - the question that we want to test question           4  by default
 -alpha - for alpha fairness the alpha                     1  by default
--flows - number of flow to randomize                       N  by default
+-flows - number of flow to randomize                      N  by default
+-K - number of orthogonal channels                        1  by default
 '''
 
 
 def main():
     # Default values
-    question = 6
+    question = 7
     alpha = 1
-    N = 50
-    M = 30
-    r = 10
+    N = 10
+    M = 50
+    r = 5
     flowsNum = N
+    K = 1
     random.seed(15)
     for arg in sys.argv[1:]:
         if arg.startswith("-q"):
@@ -515,6 +610,8 @@ def main():
             r = int(arg[2:])
         if arg.startswith("-flows"):
             flowsNum = int(arg[6:])
+        if arg.startswith("-K"):
+            flowsNum = int(arg[2:])
 
     if question == 4:
         q4(alpha)
@@ -522,6 +619,8 @@ def main():
         q5(N, M, r, alpha, flowsNum)
     if question == 6:
         q6(N, M, r, alpha, flowsNum)
+    if question == 7:
+        q7(N, M, r, alpha, flowsNum, K)
 
 
 if __name__ == "__main__":
