@@ -14,10 +14,11 @@ import numpy as np
 import queue
 import pulp
 
-def DefaultCostFunc(sigXr, cap):
+
+def DefaultCostFunc(sigXr, cap, alpha):
     if cap >= sigXr:
         return 0
-    return math.exp(sigXr)
+    return math.exp(alpha * sigXr)
 
 
 def get_link(links_set, fromUser, toUser):
@@ -33,13 +34,26 @@ def copy_array(arr):
         new_arr.append(i)
     return new_arr
 
-def GetFlowByName(flows,flowName):
+
+def GetFlowByName(flows, flowName):
     for flow in flows:
         if flowName == flow.Getname():
             return flow
     return None
 
 
+def DefaultStepSizeFunc(tp, alpha):
+    if tp == "dual":
+        return 0.01
+    else:
+        if alpha < 3:
+            return 0.001
+        if alpha < 5:
+            return 0.00001
+        if alpha < 7:
+            return 0.000001
+        else:
+            return 1 / (10 ** (alpha))
 
 
 class Flow:
@@ -96,7 +110,6 @@ class Flow:
 
     def GetK(self, link):
         return self.linkChannels[link]
-
 
 
 class Link:
@@ -176,7 +189,7 @@ class Link:
         for f in self.flows:
             if flow.GetK(self) == f.GetK(self):
                 sumOfData += f.GetpktSize()
-        return self.capacity*(flow.GetpktSize()/sumOfData)
+        return self.capacity * (flow.GetpktSize() / sumOfData)
 
     def GetFlows(self):
         return self.flows
@@ -189,7 +202,7 @@ class Link:
 class User:
     nameOfUserWithinClass = 0
 
-    def __init__(self, M=None, x_pos=None, y_pos=None, powerFunc=lambda: 100, bwFunc=lambda: 1):
+    def __init__(self, M=None, x_pos=None, y_pos=None, powerFunc=lambda: 10, bwFunc=lambda: 1):
         self.linkFromUser = set()
         self.linkToUser = set()
         self.flowsFromMe = set()
@@ -270,7 +283,7 @@ class User:
 class Graph:
 
     def __init__(self, N, alpha, M=None, r=None, users=None, flows=None, links=None, costFunc=DefaultCostFunc,
-                 stepSize=lambda flow: 1e-3, maxIterSteps=1000000, interferenceFunc=lambda: 0, K=1):
+                 stepSize=DefaultStepSizeFunc, maxIterSteps=None, interferenceFunc=lambda: 0, K=1):
         self.N = N
         self.M = M
         self.r = r
@@ -293,6 +306,10 @@ class Graph:
         self.CreateCapacities()
         self.K = K
         self.dijkMat = None
+        self.maxIterSteps = self.FindNumIterations()
+
+    def FindNumIterations(self):
+        return max(100000, int(5000 * (2 ** self.alpha)))
 
     def CreateRandomGraph(self):
         for i in range(self.N):
@@ -336,11 +353,11 @@ class Graph:
     def DevUr(self, flow):
         return 1 / (flow.GetXr() ** self.alpha)
 
-    def Kr(self, flow):
-        return self.stepSize(flow)
+    def Kr(self):
+        return self.stepSize("primal", self.alpha)
 
-    def Hr(self, flow):
-        return self.stepSize(flow)
+    def Hr(self):
+        return self.stepSize("dual", self.alpha)
 
     def printGraph(self):
         print("users:")
@@ -360,18 +377,17 @@ class Graph:
 
     def PrimalIterStep(self, chosenFlow):
         dUr = self.DevUr(chosenFlow)
-        kr = self.Kr(chosenFlow)
+        kr = self.Kr()
         SigCost = 0
         for l in chosenFlow.links:
             SigXr = 0
             for flow in l.flows:
                 SigXr += flow.GetXr()
-            SigCost += self.costFunc(SigXr, l.GetCapacity())
+            SigCost += self.costFunc(SigXr, l.GetCapacity(), self.alpha)
         return kr * (dUr - SigCost)
 
     def DualIterStep(self, chosenFlow):
-        dUr = self.DevUr(chosenFlow)
-        Hr = self.Hr(chosenFlow)
+        Hr = self.Hr()
         Siglambd = 0
         for l in chosenFlow.links:
             Siglambd += l.Getlambd()
@@ -428,7 +444,7 @@ class Graph:
             while flowDataMaxHeap:
                 pktSize, flowName = _heappop_max(flowDataMaxHeap)
                 sumData, k = heappop(KminHeap)
-                flow = GetFlowByName(link.GetFlows(),flowName)
+                flow = GetFlowByName(link.GetFlows(), flowName)
                 if flow is not None:
                     flow.AddChannelToLink(link, k)
                 sumData += pktSize
@@ -464,6 +480,7 @@ class Graph:
             print(f"flow's {i} Xr Value is: {flow.GetXr()}")  # for debug
         self.plotRun(XrsToPlot, f"{tp} run")
 
+
 class PaperFlow(Flow):
     def __init__(self, srcUser, detUser, pktSize):
         super().__init__(srcUser, detUser, pktSize)
@@ -471,24 +488,25 @@ class PaperFlow(Flow):
     def SetPacketSize(self, newPktSize):
         self.pktSize = newPktSize
 
+
 class PaperLink(Link):
     def __init__(self, fromUser, toUser):
-        super().__init__(fromUser,toUser)
+        super().__init__(fromUser, toUser)
         self.weights = {}
         self.maxWeight = 0
         self.argMaxUser = None
         self.slotRate_Dest = None
 
-    def GetWeight(self,user ):
+    def GetWeight(self, user):
         return self.weights[user]
 
-    def SetWeight(self,user,weight):
+    def SetWeight(self, user, weight):
         self.weights[user] = weight
 
     def SetWeights(self, weights):
         self.weights = weights
 
-    def SetMaxWeight(self,weight):
+    def SetMaxWeight(self, weight):
         self.maxWeight = weight
 
     def SetArgMaxUser(self, user):
@@ -522,16 +540,14 @@ class PaperUser(User):
         self.queues[user].put(flow)
 
     def PopFromQueue(self, user):
-        if (user not in self.queues) or not isinstance(self.queues[user],queue.Queue) or self.queues[user].empty():
+        if (user not in self.queues) or not isinstance(self.queues[user], queue.Queue) or self.queues[user].empty():
             return None
         return self.queues[user].get()
 
     def PeekFromQueue(self, user):
-        if (user not in self.queues) or not isinstance(self.queues[user],queue.Queue) or self.queues[user].empty():
+        if (user not in self.queues) or not isinstance(self.queues[user], queue.Queue) or self.queues[user].empty():
             return None
         return self.queues[user].queue[0]
-
-
 
     def GetQueueLen(self, user):
         if not isinstance(self.queues[user], queue.Queue):
@@ -550,6 +566,7 @@ class PaperUser(User):
     def GetR(self):
         return self.R
 
+
 class PaperGraph(Graph):
     def __init__(self, N, M, r):
         super().__init__(N, alpha=1, M=M, r=r)
@@ -567,14 +584,14 @@ class PaperGraph(Graph):
 
     @staticmethod
     def h(x):
-        return  math.log(math.e+math.log(1+x, math.e), math.e)
+        return math.log(math.e + math.log(1 + x, math.e), math.e)
 
     @staticmethod
     def g(x):
-        return math.log(1+x, math.e)/PaperGraph.h(x)
+        return math.log(1 + x, math.e) / PaperGraph.h(x)
 
     @staticmethod
-    def RemoveCS(mapLinks,link): #CS stands for Conflict Set
+    def RemoveCS(mapLinks, link):  # CS stands for Conflict Set
         fromUser = link.GetFromUser()
         toUser = link.GetFromUser()
         linksToDeleteFromMap = []
@@ -584,7 +601,6 @@ class PaperGraph(Graph):
         for l in linksToDeleteFromMap:
             del mapLinks[l]
 
-
     def CalcWeigths(self):
         for link in self.links:
             fromUser = link.GetFromUser()
@@ -593,9 +609,9 @@ class PaperGraph(Graph):
             argMaxUser = None
             for destUser in self.users:
                 if destUser.GetR()[fromUser][toUser] == 1:
-                    dWeight = PaperGraph.g(fromUser.GetQueueLen(destUser))-PaperGraph.g(toUser.GetQueueLen(destUser))
+                    dWeight = PaperGraph.g(fromUser.GetQueueLen(destUser)) - PaperGraph.g(toUser.GetQueueLen(destUser))
                     link.SetWeight(destUser, dWeight)
-                    if dWeight>maxWeight:
+                    if dWeight > maxWeight:
                         maxWeight = dWeight
                         argMaxUser = destUser
             link.SetMaxWeight(maxWeight)
@@ -603,13 +619,13 @@ class PaperGraph(Graph):
 
     def CalcRs(self):
         dijkMat = self.getDijkstraMat()
-        for i , destUser in enumerate(self.users):
+        for i, destUser in enumerate(self.users):
             R = {}
             for user1 in self.users:
                 R[user1] = {}
                 for user2 in self.users:
                     R[user1][user2] = 0
-            for j , fromUser in enumerate(self.users):
+            for j, fromUser in enumerate(self.users):
                 route = dijkMat[j][i]
                 lastUser = fromUser
                 for user in route:
@@ -621,24 +637,24 @@ class PaperGraph(Graph):
         mapToReturn = {}
         for link in self.links:
             link.SetSlotRate_Dest(False)
-            mapToReturn[link] = link.GetCapacity()*link.GetMaxWeight()
+            mapToReturn[link] = link.GetCapacity() * link.GetMaxWeight()
         return mapToReturn
-
 
     """ we assume that the article is trying to solve the max weight problem for each time slot 
     i.e. each node can eiter send or receive data in each time slot and thus the max rate of
     each link at each time is the capacity of the link 
     """
+
     def FindRates(self):
         self.CalcWeigths()
         mapCapWeight = self.CreateMapCapWeightAndSetRatesNone()
         while mapCapWeight:
-            MaxValInMap = max(mapCapWeight.items(), key=lambda x:x[1])
+            MaxValInMap = max(mapCapWeight.items(), key=lambda x: x[1])
             maxValLink, maxValue = MaxValInMap
             del mapCapWeight[maxValLink]
-            PaperGraph.RemoveCS(mapCapWeight,maxValLink)
+            PaperGraph.RemoveCS(mapCapWeight, maxValLink)
             maxValLink.SetSlotRate_Dest(True)
-            #TODO We dicided to solve it with greedy algorithm but its not optimal. Need to ask Kobi or maybe change
+            # TODO We dicided to solve it with greedy algorithm but its not optimal. Need to ask Kobi or maybe change
 
     def CreateRandomFlows(self, flowsToRand):
         for i in range(flowsToRand):
@@ -651,32 +667,34 @@ class PaperGraph(Graph):
                 pkt_size = 0.5 + random.randint(1, 10) * 0.3
                 newFlow = PaperFlow(self.users[source], self.users[dest], pkt_size)
                 flowNotCreated = False
-                newFlow.GetSource().AddToQueue(newFlow.GetDest(), newFlow)          #adding the flow to the destination queue of the source user
+                newFlow.GetSource().AddToQueue(newFlow.GetDest(),
+                                               newFlow)  # adding the flow to the destination queue of the source user
 
     def SendPackets(self):
         for link in self.links:
             if link.GetSlotRate_Dest() is not None:
-                rate , finalDest = link.GetSlotRate_Dest()
+                rate, finalDest = link.GetSlotRate_Dest()
                 sender = link.GetFromUser()
                 receiver = link.GetToUser()
                 notFinishSending = True
                 while notFinishSending:
                     flowToSend = sender.PeekFromQueue(finalDest)
                     if flowToSend is not None:
-                        if rate >= flowToSend.GetpktSize():           #in this case we can send the whole packet in one time
+                        if rate >= flowToSend.GetpktSize():  # in this case we can send the whole packet in one time
                             sender.PopFromQueue(finalDest)
                             if receiver != finalDest:
-                                receiver.AddToQueue(finalDest,PaperFlow(receiver, finalDest, flowToSend.GetpktSize()))
-                            rate = rate-flowToSend.GetpktSize()
+                                receiver.AddToQueue(finalDest, PaperFlow(receiver, finalDest, flowToSend.GetpktSize()))
+                            rate = rate - flowToSend.GetpktSize()
                             if rate <= 0:
                                 notFinishSending = False
-                        else:                                       #in this case we need to split thw packet into two packets
-                            flowToSend.SetPktSize(flowToSend.GetpktSize()-rate)
+                        else:  # in this case we need to split thw packet into two packets
+                            flowToSend.SetPktSize(flowToSend.GetpktSize() - rate)
                             if receiver != finalDest:
-                                receiver.AddToQueue(finalDest,PaperFlow(receiver, finalDest, rate))
+                                receiver.AddToQueue(finalDest, PaperFlow(receiver, finalDest, rate))
                             notFinishSending = False
                     else:
                         notFinishSending = False
+
 
 def q4(alpha):  # N = L + 1 = 5 +1
     numOfLinks = 5
@@ -755,7 +773,7 @@ def q5(N, M, r, alpha, flowsNum):
 def plotGraph(graph, runFor, title):
     plt.figure(figsize=(10, 6))  # Increasing plot size
     for i in range(len(graph)):
-        plt.plot(range(len(graph[i])), graph[i], label=f'run for ={runFor} = {i+1}*{runFor}')
+        plt.plot(range(len(graph[i])), graph[i], label=f'run for ={runFor} = {i + 1}*{runFor}')
     plt.xlabel('Flows')
     plt.ylabel('Rates')
     plt.title(title)
@@ -763,39 +781,45 @@ def plotGraph(graph, runFor, title):
     plt.grid(True)
     plt.show()
 
+
 def GraphVarNumUsers(N, M, r, alpha, flowsNum, interferenceFunc, K=1):
     dataToGraph = []
     for i in range(1, 11):
-        G = CreateGraphWithDijkstraRandomFlows(i*N, M, r, alpha, flowsNum, interferenceFunc=interferenceFunc ,K=K)
+        G = CreateGraphWithDijkstraRandomFlows(i * N, M, r, alpha, flowsNum, interferenceFunc=interferenceFunc, K=K)
         dataToGraph.append(G.runTDMA())
     plotGraph(dataToGraph, "N", "Xr vs. Number of Users")
+
 
 def GraphVarNumFlows(N, M, r, alpha, flowsNum, interferenceFunc, K=1):
     dataToGraph = []
     for i in range(1, 11):
-        G = CreateGraphWithDijkstraRandomFlows(N, M, r, alpha,i*flowsNum, interferenceFunc=interferenceFunc ,K=K)
+        G = CreateGraphWithDijkstraRandomFlows(N, M, r, alpha, i * flowsNum, interferenceFunc=interferenceFunc, K=K)
         dataToGraph.append(G.runTDMA())
     plotGraph(dataToGraph, "Number of Flows", "Xr vs. Number of Flows")
+
 
 def GraphVarRadiusM(N, M, r, alpha, flowsNum, interferenceFunc, K=1):
     dataToGraph = []
     for i in range(1, 11):
-        G = CreateGraphWithDijkstraRandomFlows(N, i*M, r, alpha, flowsNum, interferenceFunc=interferenceFunc ,K=K)
+        G = CreateGraphWithDijkstraRandomFlows(N, i * M, r, alpha, flowsNum, interferenceFunc=interferenceFunc, K=K)
         dataToGraph.append(G.runTDMA())
     plotGraph(dataToGraph, "M", "Xr vs. Radius (M)")
+
 
 def GraphVarRadiusR(N, M, r, alpha, flowsNum, interferenceFunc, K=1):
     dataToGraph = []
     for i in range(1, 11):
-        G = CreateGraphWithDijkstraRandomFlows(N, M, i*r, alpha, flowsNum, interferenceFunc=interferenceFunc ,K=K)
+        G = CreateGraphWithDijkstraRandomFlows(N, M, i * r, alpha, flowsNum, interferenceFunc=interferenceFunc, K=K)
         dataToGraph.append(G.runTDMA())
     plotGraph(dataToGraph, "r", "Xr vs. Radius (r)")
+
 
 def q6(N, M, r, alpha, flowsNum):
     GraphVarNumUsers(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1)
     GraphVarNumFlows(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1)
     GraphVarRadiusM(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1)
     GraphVarRadiusR(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1)
+
 
 def q7(N, M, r, alpha, flowsNum, K=1):
     GraphVarNumUsers(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1, K=K)
@@ -811,13 +835,14 @@ def PartB(N, M, r, t, flowsNum):
         graph.FindRates()
         graph.SendPackets()
 
+
 # Template for run:
 # python.exe .\Network_security_project.py <options>
 '''
 Arguments for program:
 -N - the number of users                                        10 by default
--M - the radius of the world                                    50 by default
--r - the maximus radius between two connected users             8  by default
+-M - the radius of the world                                    10 by default
+-r - the maximus radius between two connected users             5  by default
 -q - the question that we want to test question                 4  by default
 -alpha - for alpha fairness the alpha                           1  by default
 -flows - number of flow to randomize                            N  by default
@@ -830,10 +855,10 @@ Arguments for program:
 def main():
     # Default values
     part = "a"
-    question = 7
+    question = 5
     alpha = 1
     N = 10
-    M = 20
+    M = 10
     r = 5
     flowsNum = N
     K = 3
