@@ -458,8 +458,8 @@ class Graph:
             for j, link in enumerate(flow.GetLinks()):
                 xrsInLinkForFlow.append(link.GetTDMAVal(flow))
             xrsVec[i] = min(xrsInLinkForFlow)
-        for i in range(len(xrsVec)):  # for debug
-            print(f"flow's {i} Xr Value is: {xrsVec[i]}")  # for debug
+        # for i in range(len(xrsVec)):  # for debug
+        #     print(f"flow's {i} Xr Value is: {xrsVec[i]}")  # for debug
         return xrsVec
 
     def run(self, tp):
@@ -770,55 +770,63 @@ def q5(N, M, r, alpha, flowsNum):
     G.run("Dual")
 
 
-def plotGraph(graph, runFor, title):
+def plotGraph(graph, runFor, title, tpOfCalc, xAxis):
     plt.figure(figsize=(10, 6))  # Increasing plot size
-    for i in range(len(graph)):
-        plt.plot(range(len(graph[i])), graph[i], label=f'run for ={runFor} = {i + 1}*{runFor}')
-    plt.xlabel('Flows')
-    plt.ylabel('Rates')
+    plt.plot(xAxis, graph)
+    plt.xlabel(runFor)
+    plt.ylabel(f"{tpOfCalc} Rates")
     plt.title(title)
-    plt.legend()
     plt.grid(True)
     plt.show()
 
 
 def GraphVarNumUsers(N, M, r, alpha, flowsNum, interferenceFunc, K=1):
     dataToGraph = []
-    for i in range(1, 11):
+    xAxis = []
+    for i in range(1, 21):
         G = CreateGraphWithDijkstraRandomFlows(i * N, M, r, alpha, flowsNum, interferenceFunc=interferenceFunc, K=K)
-        dataToGraph.append(G.runTDMA())
-    plotGraph(dataToGraph, "N", "Xr vs. Number of Users")
+        dataToGraph.append(np.mean(G.runTDMA()))
+        xAxis.append(i * N)
+    plotGraph(dataToGraph, "N", "Mean Xr vs. Number of Users", "mean", xAxis)
 
 
 def GraphVarNumFlows(N, M, r, alpha, flowsNum, interferenceFunc, K=1):
     dataToGraph = []
-    for i in range(1, 11):
+    xAxis = []
+    for i in range(1, 21):
         G = CreateGraphWithDijkstraRandomFlows(N, M, r, alpha, i * flowsNum, interferenceFunc=interferenceFunc, K=K)
-        dataToGraph.append(G.runTDMA())
-    plotGraph(dataToGraph, "Number of Flows", "Xr vs. Number of Flows")
+        dataToGraph.append(np.min(G.runTDMA()))
+        xAxis.append(i * flowsNum)
+    plotGraph(dataToGraph, "Number of Flows", "Min Xr vs. Number of Flows", "min", xAxis)
 
 
 def GraphVarRadiusM(N, M, r, alpha, flowsNum, interferenceFunc, K=1):
     dataToGraph = []
-    for i in range(1, 11):
-        G = CreateGraphWithDijkstraRandomFlows(N, i * M, r, alpha, flowsNum, interferenceFunc=interferenceFunc, K=K)
-        dataToGraph.append(G.runTDMA())
-    plotGraph(dataToGraph, "M", "Xr vs. Radius (M)")
+    xAxis = []
+    for i in range(0, 10):
+        m = r + (i*0.2*r)
+        G = CreateGraphWithDijkstraRandomFlows(N, m, r, alpha, flowsNum, interferenceFunc=interferenceFunc, K=K)
+        rateVector = G.runTDMA()
+        if not rateVector:
+            dataToGraph.append(0)
+        else:
+            dataToGraph.append(np.mean(rateVector))
+        xAxis.append(m)
+    plotGraph(dataToGraph, "M", "Mean Xr vs. Radius (M)", "Mean", xAxis)
 
 
 def GraphVarRadiusR(N, M, r, alpha, flowsNum, interferenceFunc, K=1):
     dataToGraph = []
-    for i in range(1, 11):
-        G = CreateGraphWithDijkstraRandomFlows(N, M, i * r, alpha, flowsNum, interferenceFunc=interferenceFunc, K=K)
-        dataToGraph.append(G.runTDMA())
-    plotGraph(dataToGraph, "r", "Xr vs. Radius (r)")
-
-
-def q6(N, M, r, alpha, flowsNum):
-    GraphVarNumUsers(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1)
-    GraphVarNumFlows(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1)
-    GraphVarRadiusM(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1)
-    GraphVarRadiusR(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1)
+    xAxis = []
+    for i in range(1, M):
+        G = CreateGraphWithDijkstraRandomFlows(N, M, i, alpha, flowsNum, interferenceFunc=interferenceFunc, K=K)
+        rateVector = G.runTDMA()
+        if not rateVector:
+            dataToGraph.append(0)
+        else:
+            dataToGraph.append(np.min(rateVector))
+        xAxis.append(i)
+    plotGraph(dataToGraph, "r", "Min Xr vs. Radius (r)", "Min", xAxis)
 
 
 def q7(N, M, r, alpha, flowsNum, K=1):
@@ -855,7 +863,7 @@ Arguments for program:
 def main():
     # Default values
     part = "a"
-    question = 5
+    question = 6
     alpha = 1
     N = 10
     M = 10
@@ -890,7 +898,7 @@ def main():
         if question == 5:
             q5(N, M, r, alpha, flowsNum)
         if question == 6:
-            q6(N, M, r, alpha, flowsNum)
+            q7(N, M, r, alpha, flowsNum)
         if question == 7:
             q7(N, M, r, alpha, flowsNum, K)
 
