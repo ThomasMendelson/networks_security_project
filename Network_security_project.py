@@ -482,16 +482,16 @@ class Graph:
 
 
 class PaperFlow(Flow):
-    def __init__(self, srcUser, detUser, pktSize):
-        super().__init__(srcUser, detUser, pktSize)
+    def __init__(self, destUser, srcUser, pktSize):
+        super().__init__(destUser, srcUser, pktSize)
 
     def SetPacketSize(self, newPktSize):
         self.pktSize = newPktSize
 
 
 class PaperLink(Link):
-    def __init__(self, fromUser, toUser):
-        super().__init__(fromUser, toUser)
+    def __init__(self, fromUser, toUser, capacity = None):
+        super().__init__(fromUser, toUser, capacity = capacity)
         self.weights = {}
         self.maxWeight = 0
         self.argMaxUser = None
@@ -527,9 +527,16 @@ class PaperLink(Link):
     def GetSlotRate_Dest(self):
         return self.slotRate_Dest
 
+    @staticmethod
+    def GetLinkByName(linkSet, name):
+        for link in linkSet:
+            if link.Getname()==name:
+                return link
+        return None
+
 
 class PaperUser(User):
-    def __init__(self, M):
+    def __init__(self, M=10):
         super().__init__(M=M)
         self.queues = {}
         self.R = {}
@@ -550,12 +557,12 @@ class PaperUser(User):
         return self.queues[user].queue[0]
 
     def GetQueueLen(self, user):
-        if not isinstance(self.queues[user], queue.Queue):
+        if (user not in self.queues) or not isinstance(self.queues[user], queue.Queue):
             return 0
         return self.queues[user].qsize()
 
-    def AddLinkTo(self, friend):
-        link = PaperLink(self, friend)
+    def AddLinkTo(self, friend, capacity = None):
+        link = PaperLink(self, friend, capacity)
         self.linkFromUser.add(link)
         friend.linkToUser.add(link)
         return link
@@ -568,9 +575,10 @@ class PaperUser(User):
 
 
 class PaperGraph(Graph):
-    def __init__(self, N, M, r):
-        super().__init__(N, alpha=1, M=M, r=r)
+    def __init__(self, N, M=None, r=None, users=None, links=None):
+        super().__init__(N, alpha=1, M=M, r=r, users=users, links=links)
         self.CalcRs()
+        self.sumDataInGraph = 0
 
     def CreateRandomGraph(self):
         for i in range(self.N):
@@ -593,7 +601,7 @@ class PaperGraph(Graph):
     @staticmethod
     def RemoveCS(mapLinks, link):  # CS stands for Conflict Set
         fromUser = link.GetFromUser()
-        toUser = link.GetFromUser()
+        toUser = link.GetToUser()
         linksToDeleteFromMap = []
         for l in mapLinks:
             if l.GetFromUser() == fromUser or l.GetFromUser() == toUser or l.GetToUser() == fromUser or l.GetToUser() == toUser:
@@ -615,7 +623,8 @@ class PaperGraph(Graph):
                         maxWeight = dWeight
                         argMaxUser = destUser
             link.SetMaxWeight(maxWeight)
-            link.SetArgMaxUser(argMaxUser)
+            if argMaxUser is not None:
+                link.SetArgMaxUser(argMaxUser)
 
     def CalcRs(self):
         dijkMat = self.getDijkstraMat()
@@ -631,6 +640,7 @@ class PaperGraph(Graph):
                 for user in route:
                     R[lastUser][user] = 1
                     lastUser = user
+                R[lastUser][destUser] = 1
             destUser.SetR(R)
 
     def CreateMapCapWeightAndSetRatesNone(self):
@@ -653,8 +663,44 @@ class PaperGraph(Graph):
             maxValLink, maxValue = MaxValInMap
             del mapCapWeight[maxValLink]
             PaperGraph.RemoveCS(mapCapWeight, maxValLink)
-            maxValLink.SetSlotRate_Dest(True)
+            if maxValue>0:
+                maxValLink.SetSlotRate_Dest(True)
             # TODO We dicided to solve it with greedy algorithm but its not optimal. Need to ask Kobi or maybe change
+
+    def CalcSumValue(self, linksNamesArray, valueMap):
+        sumToReturn = 0
+        for name in linksNamesArray:
+            link = PaperLink.GetLinkByName(self.links, name)
+            if link is not None:
+                sumToReturn += valueMap[link]
+        return sumToReturn
+    """
+    All options are:
+    links: 0 2 4
+    links: 0 3
+    links: 1 3
+    links: 1 4
+    """
+    def FindRatesForQ1(self):
+        self.CalcWeigths()
+        mapCapWeight = self.CreateMapCapWeightAndSetRatesNone()
+        maxSumValue = 0
+        chosenLinks = None
+        if self.CalcSumValue([0,2,4],mapCapWeight) > maxSumValue:
+            chosenLinks = [0,2,4]
+        if self.CalcSumValue([0,3],mapCapWeight) > maxSumValue:
+            chosenLinks = [0,3]
+        if self.CalcSumValue([1,3],mapCapWeight) > maxSumValue:
+            chosenLinks = [1,3]
+        if self.CalcSumValue([1,4],mapCapWeight) > maxSumValue:
+            chosenLinks = [1,4]
+        if chosenLinks is not None:
+            for i in chosenLinks:
+                link = PaperLink.GetLinkByName(self.links, i)
+                if link is not None:
+                    if link.GetArgMaxUser() is not None:
+                        link.SetSlotRate_Dest(True)
+
 
     def CreateRandomFlows(self, flowsToRand):
         for i in range(flowsToRand):
@@ -670,6 +716,26 @@ class PaperGraph(Graph):
                 newFlow.GetSource().AddToQueue(newFlow.GetDest(),
                                                newFlow)  # adding the flow to the destination queue of the source user
 
+    def CreateFlowsQ1(self, rho):
+        for i, rhoS in enumerate(rho):
+            if rhoS == 0:
+                continue
+            isGettingData = random.uniform(0, 1)
+            if isGettingData < 0.4:
+                numberOfFlows = 0
+            elif isGettingData < 0.8:
+                numberOfFlows = 1
+            else:
+                numberOfFlows = 2
+            for j in range(numberOfFlows):
+                sizeOfPacket = random.uniform(0, rhoS / 0.4)
+                if i == 0:
+                    newFlow = PaperFlow(destUser=self.users[np.random.choice([1, 5], p=[0.5, 0.5])], srcUser=self.users[i], pktSize=sizeOfPacket)
+                else:
+                    newFlow = PaperFlow(destUser=self.users[i + 1], srcUser=self.users[i], pktSize=sizeOfPacket)
+                newFlow.GetSource().AddToQueue(newFlow.GetDest(), newFlow)
+                self.sumDataInGraph += sizeOfPacket
+
     def SendPackets(self):
         for link in self.links:
             if link.GetSlotRate_Dest() is not None:
@@ -684,16 +750,25 @@ class PaperGraph(Graph):
                             sender.PopFromQueue(finalDest)
                             if receiver != finalDest:
                                 receiver.AddToQueue(finalDest, PaperFlow(receiver, finalDest, flowToSend.GetpktSize()))
+                            else:
+                                self.sumDataInGraph -= flowToSend.GetpktSize()
+
                             rate = rate - flowToSend.GetpktSize()
                             if rate <= 0:
                                 notFinishSending = False
                         else:  # in this case we need to split thw packet into two packets
-                            flowToSend.SetPktSize(flowToSend.GetpktSize() - rate)
+                            flowToSend.SetPacketSize(flowToSend.GetpktSize() - rate)
                             if receiver != finalDest:
                                 receiver.AddToQueue(finalDest, PaperFlow(receiver, finalDest, rate))
+                            else:
+                                self.sumDataInGraph -= rate
+
                             notFinishSending = False
                     else:
                         notFinishSending = False
+
+    def GetSumData(self):
+        return self.sumDataInGraph
 
 
 def q4(alpha):  # N = L + 1 = 5 +1
@@ -804,7 +879,7 @@ def GraphVarRadiusM(N, M, r, alpha, flowsNum, interferenceFunc, K=1):
     dataToGraph = []
     xAxis = []
     for i in range(0, 10):
-        m = r + (i*0.2*r)
+        m = r + (i * 0.2 * r)
         G = CreateGraphWithDijkstraRandomFlows(N, m, r, alpha, flowsNum, interferenceFunc=interferenceFunc, K=K)
         rateVector = G.runTDMA()
         if not rateVector:
@@ -836,12 +911,39 @@ def q7(N, M, r, alpha, flowsNum, K=1):
     GraphVarRadiusR(N, M, r, alpha, flowsNum, interferenceFunc=lambda: 1, K=K)
 
 
-def PartB(N, M, r, t, flowsNum):
-    graph = PaperGraph(N=N, M=M, r=r)
+def CreateGraphFromQuestion1():
+    numOfLinks = 5
+    users = []
+    links = set()
+
+    # create empty users
+    for i in range(numOfLinks + 1):
+        users.append(PaperUser())
+
+    # create links and connect to flows
+    for i in range(numOfLinks):
+        link = users[i].AddLinkTo(friend=users[i + 1],capacity = 1)
+        links.add(link)
+
+    return PaperGraph(6, users=users, links=links)
+
+
+def PartB(t, rho):
+    graph = CreateGraphFromQuestion1()
+    sumDataToPlot = []
     for i in range(t):
-        graph.CreateRandomFlows(flowsNum)
+        graph.CreateFlowsQ1(rho)
+        #graph.FindRatesForQ1()
         graph.FindRates()
         graph.SendPackets()
+        sumDataToPlot.append(graph.GetSumData())
+    plt.figure(figsize=(10, 6))  # Increasing plot size
+    plt.plot(range(t), sumDataToPlot)
+    plt.xlabel("t")
+    plt.ylabel(f"Total data in Graph")
+    plt.title("Data in graph in respect to time")
+    plt.grid(True)
+    plt.show()
 
 
 # Template for run:
@@ -856,22 +958,23 @@ Arguments for program:
 -flows - number of flow to randomize                            N  by default
 -K - number of orthogonal channels                              1  by default
 -part - the part we are running                                 a  by default
--t - in part b how many time slots the simulation will run      10 by default
+-t - in part b how many time slots the simulation will run      20000 by default
 '''
 
 
 def main():
     # Default values
     part = "a"
-    question = 6
+    question = 4
     alpha = 1
     N = 10
     M = 10
     r = 5
     flowsNum = N
-    K = 3
-    t = 10
-    random.seed(15)
+    K = 1
+    t = 20000
+    rho = [0.25, 0.25, 0.25, 0.25, 0.25]
+    random.seed(2)
     for arg in sys.argv[1:]:
         if arg.startswith("-q"):
             question = int(arg[2:])
@@ -903,7 +1006,7 @@ def main():
             q7(N, M, r, alpha, flowsNum, K)
 
     if part == "b":
-        PartB(N, M, r, t, flowsNum)
+        PartB(t, rho)
 
 
 if __name__ == "__main__":
